@@ -28,7 +28,7 @@ const authMiddleware = async (req, res, next) => {
 
         req.user = {
             id: users[0].id,
-            role: decoded.role || users[0].role
+            role: users[0].role
         };
         
         next();

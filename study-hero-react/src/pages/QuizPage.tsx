@@ -8,7 +8,7 @@ interface QuizQuestion {
   id: number;
   question: string;
   options: string[];
-  correctAnswer: string;
+  correctAnswer?: string;
   explanation?: string;
 }
 
@@ -31,6 +31,16 @@ interface Quiz {
   code?: string;
 }
 
+interface AnswerSummary {
+  questionId: number;
+  question: string;
+  options: string[];
+  selectedAnswer: string | null;
+  correctAnswer: string;
+  isCorrect: boolean;
+  explanation?: string;
+}
+
 interface QuizResponse {
   id: string;
   title: string;
@@ -40,7 +50,7 @@ interface QuizResponse {
     id: number;
     question: string;
     options: string[];
-    correctAnswer: string;
+    correctAnswer?: string;
     explanation?: string;
   }>;
   settings?: Partial<QuizSettings> & { timeLimit?: number; passingScore?: number };
@@ -69,7 +79,7 @@ const normalizeQuiz = (quiz: QuizResponse): Quiz => {
       id: question.id,
       question: question.question,
       options: question.options,
-      correctAnswer: question.correctAnswer,
+      correctAnswer: question.correctAnswer || '',
       explanation: question.explanation
     })),
     settings: {
@@ -101,6 +111,7 @@ const QuizPage: React.FC = () => {
   const [webcamReady, setWebcamReady] = useState<boolean>(false);
   const [timeLeft, setTimeLeft] = useState<number>(0);
   const [score, setScore] = useState<number>(0);
+  const [resultAnswers, setResultAnswers] = useState<AnswerSummary[]>([]);
   const [violations, setViolations] = useState<string[]>([]);
   const [showExplanation, setShowExplanation] = useState<boolean>(false);
   const [showScore, setShowScore] = useState(false);
@@ -153,6 +164,7 @@ const QuizPage: React.FC = () => {
         setQuizStarted(false);
         setQuizCompleted(false);
         setShowScore(false);
+        setResultAnswers([]);
         setQuizCode(quizData.code || null);
         setQuizTitle(quizData.title);
         setQuizDescription(quizData.description);
@@ -245,13 +257,14 @@ const QuizPage: React.FC = () => {
 
     try {
       setSubmittingQuiz(true);
-      const result = await apiRequest<{ score: number; totalQuestions: number; percentage: number }>(`/api/quiz/attempts/${attemptId}/submit`, {
+      const result = await apiRequest<{ score: number; totalQuestions: number; percentage: number; answers: AnswerSummary[] }>(`/api/quiz/attempts/${attemptId}/submit`, {
         method: 'POST',
         body: JSON.stringify({ answers: finalAnswers, violations })
       });
 
       setSelectedAnswers(finalAnswers);
       setScore(result.score);
+      setResultAnswers(result.answers || []);
       setShowScore(true);
       setQuizCompleted(true);
     } catch (error: any) {
@@ -282,6 +295,7 @@ const QuizPage: React.FC = () => {
       setCurrentQuestion(questions[0] || null);
       setShowExplanation(false);
       setViolations([]);
+      setResultAnswers([]);
       setLoadError('');
     } catch (error: any) {
       console.error('Quiz attempt start error:', error);
@@ -511,38 +525,38 @@ const QuizPage: React.FC = () => {
             <div className="space-y-6">
               <h2 className="text-xl font-medium text-gray-800 mb-4">Question Summary</h2>
               
-              {questions.map((question, index) => (
+              {resultAnswers.map((answer, index) => (
                 <div 
-                  key={question.id} 
+                  key={answer.questionId} 
                   className={`border rounded-lg p-4 ${
-                    selectedAnswers[question.id] === question.correctAnswer
+                    answer.isCorrect
                       ? 'border-green-200 bg-green-50'
                       : 'border-red-200 bg-red-50'
                   }`}
                 >
                   <h3 className="font-medium text-gray-800 mb-2">
-                    {index + 1}. {question.question}
+                    {index + 1}. {answer.question}
                   </h3>
                   
                   <ul className="space-y-2 mb-3">
-                    {question.options.map((option) => (
+                    {answer.options.map((option) => (
                       <li
                         key={option}
                         className={`px-3 py-2 rounded ${
-                          option === question.correctAnswer
+                          option === answer.correctAnswer
                             ? 'bg-green-200 text-green-800'
-                            : option === selectedAnswers[question.id] && option !== question.correctAnswer
+                            : option === answer.selectedAnswer && option !== answer.correctAnswer
                               ? 'bg-red-200 text-red-800'
                               : 'bg-gray-100 text-gray-800'
                         }`}
                       >
                         {option}
-                        {option === question.correctAnswer && (
+                        {option === answer.correctAnswer && (
                           <span className="float-right">
                             <i className="ri-check-line"></i>
                           </span>
                         )}
-                        {option === selectedAnswers[question.id] && option !== question.correctAnswer && (
+                        {option === answer.selectedAnswer && option !== answer.correctAnswer && (
                           <span className="float-right">
                             <i className="ri-close-line"></i>
                           </span>
@@ -551,14 +565,10 @@ const QuizPage: React.FC = () => {
                     ))}
                   </ul>
                   
-                  <div className={`text-sm font-medium ${
-                    selectedAnswers[question.id] === question.correctAnswer
-                      ? 'text-green-600'
-                      : 'text-red-600'
-                  }`}>
-                    {selectedAnswers[question.id] === question.correctAnswer
+                  <div className={`text-sm font-medium ${answer.isCorrect ? 'text-green-600' : 'text-red-600'}`}>
+                    {answer.isCorrect
                       ? 'Correct'
-                      : 'Incorrect - Correct answer: ' + question.correctAnswer
+                      : 'Incorrect - Correct answer: ' + answer.correctAnswer
                     }
                   </div>
                 </div>

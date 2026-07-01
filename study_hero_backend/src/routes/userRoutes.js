@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { authMiddleware } = require('../middleware/authMiddleware');
+const { authMiddleware, teacherMiddleware } = require('../middleware/authMiddleware');
 
 // Register new user with role-specific fields
 router.post('/register', async (req, res) => {
@@ -164,15 +164,16 @@ router.put('/profile', authMiddleware, async (req, res) => {
     }
 });
 
-// Get all teachers
-router.get('/teachers', async (req, res) => {
+// Get teacher directory for authenticated users
+router.get('/teachers', authMiddleware, async (req, res) => {
     try {
         const [teachers] = await db.query(`
-            SELECT 
-                id, username, email,
+            SELECT
+                id, username,
                 specialization, qualification, experience_years, bio, profile_picture
-            FROM users 
+            FROM users
             WHERE role = 'teacher'
+            ORDER BY username
         `);
         res.json(teachers);
     } catch (error) {
@@ -180,20 +181,22 @@ router.get('/teachers', async (req, res) => {
     }
 });
 
-// Get all students
-router.get('/students', async (req, res) => {
+// Get students enrolled in the authenticated teacher's courses
+router.get('/students', authMiddleware, teacherMiddleware, async (req, res) => {
     try {
         const [students] = await db.query(`
-            SELECT 
-                id, username, email,
-                enrollment_number, department, semester, batch
-            FROM users 
-            WHERE role = 'student'
-        `);
+            SELECT DISTINCT
+                u.id, u.username, u.email,
+                u.enrollment_number, u.department, u.semester, u.batch
+            FROM users u
+            JOIN enrollments e ON e.student_id = u.id AND e.status = 'active'
+            JOIN courses c ON c.id = e.course_id
+            WHERE u.role = 'student' AND c.teacher_id = ?
+            ORDER BY u.username
+        `, [req.user.id]);
         res.json(students);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
-
 module.exports = router; 

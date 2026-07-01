@@ -69,6 +69,20 @@ async function logActivity({ actorId, targetUserId = null, courseId = null, enti
     `, [actorId, targetUserId, courseId, entityType, entityId, action, metadata ? JSON.stringify(metadata) : null]);
 }
 
+async function isStudentEnrolled(studentId, courseId) {
+    const [rows] = await db.query(
+        'SELECT id FROM enrollments WHERE student_id = ? AND course_id = ? AND status = \'active\'',
+        [studentId, courseId]
+    );
+    return rows.length > 0;
+}
+
+function parseSettings(quiz) {
+    return quiz.settings_json
+        ? (typeof quiz.settings_json === 'string' ? JSON.parse(quiz.settings_json) : quiz.settings_json)
+        : normalizeSettings({ timeLimit: quiz.duration_minutes, passingScore: quiz.passing_score });
+}
+
 async function saveQuiz({ title, description, course_id, assignment_id = null, teacher_id, questions, settings = {}, source = 'manual', quizText = null }) {
     const normalizedSettings = normalizeSettings(settings);
     const quizCode = generateQuizCode();
@@ -157,24 +171,84 @@ async function getQuizWithQuestions(quizId) {
         question.correctAnswer = options.find((option) => option.isCorrect)?.text || '';
     }
 
-    const settings = quiz.settings_json
-        ? (typeof quiz.settings_json === 'string' ? JSON.parse(quiz.settings_json) : quiz.settings_json)
-        : normalizeSettings({ timeLimit: quiz.duration_minutes, passingScore: quiz.passing_score });
-
     return {
         id: String(quiz.id),
         title: quiz.title || `Quiz #${quiz.id}`,
         description: quiz.description || '',
         courseId: quiz.course_id,
         courseName: quiz.courseName,
+        teacherId: quiz.teacher_id,
         code: quiz.quiz_code,
         status: quiz.status,
         scheduledDate: quiz.scheduled_date,
         duration: quiz.duration_minutes,
         passingScore: quiz.passing_score,
-        settings,
+        settings: parseSettings(quiz),
         source: quiz.source,
         questions
+    };
+}
+
+function serializeQuiz(quiz, { includeAnswers = false } = {}) {
+    return {
+        id: quiz.id,
+        title: quiz.title,
+        description: quiz.description,
+        courseId: quiz.courseId,
+        courseName: quiz.courseName,
+        code: quiz.code,
+        status: quiz.status,
+        scheduledDate: quiz.scheduledDate,
+        duration: quiz.duration,
+        passingScore: quiz.passingScore,
+        settings: quiz.settings,
+        source: quiz.source,
+        questions: quiz.questions.map((question) => {
+            const serialized = {
+                id: question.id,
+                question: question.question,
+                options: question.options,
+                explanation: question.explanation || ''
+            };
+
+            if (includeAnswers) {
+                serialized.correctAnswer = question.correctAnswer;
+            }
+
+            return serialized;
+        })
+    };
+}
+
+async function authorizeQuizAccess(req, quiz, { requireActive = false } = {}) {
+    if (!quiz) {
+        return { allowed: false, status: 404, error: 'Quiz not found', includeAnswers: false };
+    }
+
+    if (req.user.role === 'teacher') {
+        const ownsQuiz = quiz.teacherId === req.user.id;
+        return {
+            allowed: ownsQuiz,
+            status: ownsQuiz ? 200 : 404,
+            error: ownsQuiz ? null : 'Quiz not found',
+            includeAnswers: ownsQuiz
+        };
+    }
+
+    if (req.user.role !== 'student') {
+        return { allowed: false, status: 403, error: 'Not authorized to access this quiz', includeAnswers: false };
+    }
+
+    if (requireActive && quiz.status !== 'active') {
+        return { allowed: false, status: 404, error: 'Quiz not found', includeAnswers: false };
+    }
+
+    const enrolled = await isStudentEnrolled(req.user.id, quiz.courseId);
+    return {
+        allowed: enrolled && (!requireActive || quiz.status === 'active'),
+        status: enrolled ? 403 : 404,
+        error: enrolled ? 'Quiz is not available' : 'Quiz not found',
+        includeAnswers: false
     };
 }
 
@@ -207,21 +281,45 @@ router.get('/code/:code', authMiddleware, async (req, res) => {
         }
 
         const quiz = await getQuizWithQuestions(rows[0].id);
-        res.json(quiz);
+        const access = await authorizeQuizAccess(req, quiz, { requireActive: req.user.role !== 'teacher' });
+        if (!access.allowed) {
+            return res.status(access.status).json({ error: access.error });
+        }
+
+        res.json(serializeQuiz(quiz, { includeAnswers: access.includeAnswers }));
     } catch (error) {
         console.error('Quiz code lookup error:', error);
         res.status(500).json({ error: 'Failed to look up quiz code' });
     }
 });
 
+router.get('/:id/results', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const [attempts] = await db.query(`
+            SELECT qa.*, u.username AS studentName, u.email AS studentEmail
+            FROM quiz_attempts qa
+            JOIN quizzes q ON q.id = qa.quiz_id
+            JOIN users u ON u.id = qa.student_id
+            WHERE qa.quiz_id = ? AND q.teacher_id = ? AND qa.status = 'submitted'
+            ORDER BY qa.submitted_at DESC
+        `, [req.params.id, req.user.id]);
+
+        res.json(attempts);
+    } catch (error) {
+        console.error('Quiz results error:', error);
+        res.status(500).json({ error: 'Failed to load quiz results' });
+    }
+});
+
 router.get('/:id', authMiddleware, async (req, res) => {
     try {
         const quiz = await getQuizWithQuestions(req.params.id);
-        if (!quiz) {
-            return res.status(404).json({ error: 'Quiz not found' });
+        const access = await authorizeQuizAccess(req, quiz, { requireActive: req.user.role !== 'teacher' });
+        if (!access.allowed) {
+            return res.status(access.status).json({ error: access.error });
         }
 
-        res.json(quiz);
+        res.json(serializeQuiz(quiz, { includeAnswers: access.includeAnswers }));
     } catch (error) {
         console.error('Quiz detail error:', error);
         res.status(500).json({ error: 'Failed to load quiz' });
@@ -333,6 +431,11 @@ router.post('/generate', authMiddleware, teacherMiddleware, async (req, res) => 
             return res.status(400).json({ error: 'context and course_id are required' });
         }
 
+        const [courses] = await db.query('SELECT id FROM courses WHERE id = ? AND teacher_id = ?', [course_id, req.user.id]);
+        if (courses.length === 0) {
+            return res.status(403).json({ error: 'Not authorized for this course' });
+        }
+
         const response = await axios.post(
             'https://api.mistral.ai/v1/chat/completions',
             {
@@ -399,7 +502,6 @@ router.post('/generate-from-file', authMiddleware, teacherMiddleware, upload.sin
             VALUES (?, ?, ?, ?, ?)
         `, [req.user.id, courseId, req.file.originalname, req.file.mimetype, req.file.size]);
 
-        req.body.context = context;
         const response = await axios.post(
             'https://api.mistral.ai/v1/chat/completions',
             {
@@ -440,9 +542,14 @@ router.post('/generate-from-file', authMiddleware, teacherMiddleware, upload.sin
 
 router.post('/:id/attempts', authMiddleware, async (req, res) => {
     try {
+        if (req.user.role !== 'student') {
+            return res.status(403).json({ error: 'Only students can start quiz attempts' });
+        }
+
         const quiz = await getQuizWithQuestions(req.params.id);
-        if (!quiz) {
-            return res.status(404).json({ error: 'Quiz not found' });
+        const access = await authorizeQuizAccess(req, quiz, { requireActive: true });
+        if (!access.allowed) {
+            return res.status(access.status).json({ error: access.error });
         }
 
         const [result] = await db.query(`
@@ -461,16 +568,29 @@ router.post('/attempts/:attemptId/submit', authMiddleware, async (req, res) => {
     const connection = await db.getConnection();
 
     try {
+        if (req.user.role !== 'student') {
+            return res.status(403).json({ error: 'Only students can submit quiz attempts' });
+        }
+
         const { answers = {}, violations = [] } = req.body;
         const [attempts] = await connection.query('SELECT * FROM quiz_attempts WHERE id = ? AND student_id = ?', [req.params.attemptId, req.user.id]);
         if (attempts.length === 0) {
-            connection.release();
             return res.status(404).json({ error: 'Attempt not found' });
         }
 
         const attempt = attempts[0];
+        if (attempt.status === 'submitted') {
+            return res.status(409).json({ error: 'Attempt has already been submitted' });
+        }
+
         const quiz = await getQuizWithQuestions(attempt.quiz_id);
+        const access = await authorizeQuizAccess(req, quiz, { requireActive: true });
+        if (!access.allowed) {
+            return res.status(access.status).json({ error: access.error });
+        }
+
         let score = 0;
+        const answerSummary = [];
 
         await connection.beginTransaction();
         for (const question of quiz.questions) {
@@ -483,6 +603,16 @@ router.post('/attempts/:attemptId/submit', authMiddleware, async (req, res) => {
                 INSERT INTO quiz_attempt_answers (attempt_id, question_id, selected_option_id, selected_answer, is_correct)
                 VALUES (?, ?, ?, ?, ?)
             `, [attempt.id, question.id, option?.id || null, selectedAnswer || null, isCorrect]);
+
+            answerSummary.push({
+                questionId: question.id,
+                question: question.question,
+                options: question.options,
+                selectedAnswer: selectedAnswer || null,
+                correctAnswer: question.correctAnswer,
+                isCorrect,
+                explanation: question.explanation || ''
+            });
         }
 
         const percentage = quiz.questions.length ? Number(((score / quiz.questions.length) * 100).toFixed(2)) : 0;
@@ -494,31 +624,13 @@ router.post('/attempts/:attemptId/submit', authMiddleware, async (req, res) => {
 
         await connection.commit();
         await logActivity({ actorId: req.user.id, targetUserId: req.user.id, courseId: quiz.courseId, entityType: 'quiz_attempt', entityId: attempt.id, action: 'submitted_quiz', metadata: { percentage } });
-        res.json({ score, totalQuestions: quiz.questions.length, percentage });
+        res.json({ score, totalQuestions: quiz.questions.length, percentage, answers: answerSummary });
     } catch (error) {
         await connection.rollback();
         console.error('Submit attempt error:', error);
         res.status(500).json({ error: 'Failed to submit quiz attempt' });
     } finally {
         connection.release();
-    }
-});
-
-router.get('/:id/results', authMiddleware, teacherMiddleware, async (req, res) => {
-    try {
-        const [attempts] = await db.query(`
-            SELECT qa.*, u.username AS studentName, u.email AS studentEmail
-            FROM quiz_attempts qa
-            JOIN quizzes q ON q.id = qa.quiz_id
-            JOIN users u ON u.id = qa.student_id
-            WHERE qa.quiz_id = ? AND q.teacher_id = ? AND qa.status = 'submitted'
-            ORDER BY qa.submitted_at DESC
-        `, [req.params.id, req.user.id]);
-
-        res.json(attempts);
-    } catch (error) {
-        console.error('Quiz results error:', error);
-        res.status(500).json({ error: 'Failed to load quiz results' });
     }
 });
 

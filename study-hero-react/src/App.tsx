@@ -13,6 +13,8 @@ import DashboardPage from './pages/DashboardPage';
 import StudentDashboardPage from './pages/StudentDashboardPage';
 import TeacherDashboardPage from './pages/TeacherDashboardPage';
 import QuizPage from './pages/QuizPage';
+import CoursePage from './pages/CoursePage';
+import AssignmentPage from './pages/AssignmentPage';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) => {
@@ -76,6 +78,30 @@ const App: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['teacher']}>
               <TeacherDashboardPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/course/:courseId" 
+          element={
+            <ProtectedRoute allowedRoles={['student', 'teacher']}>
+              <CoursePage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/assignment/:assignmentId" 
+          element={
+            <ProtectedRoute allowedRoles={['student', 'teacher']}>
+              <AssignmentPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/assignment/:assignmentId/review" 
+          element={
+            <ProtectedRoute allowedRoles={['teacher']}>
+              <AssignmentPage />
             </ProtectedRoute>
           } 
         />

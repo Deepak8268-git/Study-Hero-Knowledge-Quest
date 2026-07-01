@@ -35,12 +35,7 @@ interface Quiz {
   id: string;
   title: string;
   description: string;
-  questions: {
-    id: number;
-    question: string;
-    options: string[];
-    correctAnswer: string;
-  }[];
+  questionCount: number;
   isActive?: boolean;
   scheduledDate?: string;
   duration?: number;
@@ -56,12 +51,7 @@ interface StoredQuiz {
   id: string;
   title: string;
   description: string;
-  questions: {
-    id: number;
-    question: string;
-    options: string[];
-    correctAnswer: string;
-  }[];
+  questionCount: number;
   isActive?: boolean;
   scheduledDate?: string;
   duration?: number;
@@ -124,12 +114,7 @@ const TeacherDashboardPage: React.FC = () => {
       id: String(quiz.id),
       title: quiz.title,
       description: quiz.description || '',
-      questions: Array(Number(quiz.questionCount || 0)).fill({
-        id: 0,
-        question: '',
-        options: [],
-        correctAnswer: ''
-      }),
+      questionCount: Number(quiz.questionCount || 0),
       isActive: quiz.status === 'active',
       scheduledDate: quiz.scheduledDate || undefined,
       duration: Number(quiz.duration || 20),

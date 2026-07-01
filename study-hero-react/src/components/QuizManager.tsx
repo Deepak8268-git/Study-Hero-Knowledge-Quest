@@ -5,12 +5,7 @@ interface Quiz {
   id: string;
   title: string;
   description: string;
-  questions: {
-    id: number;
-    question: string;
-    options: string[];
-    correctAnswer: string;
-  }[];
+  questionCount: number;
   isActive?: boolean;
   scheduledDate?: string;
   duration?: number;
@@ -91,7 +86,7 @@ const QuizManager: React.FC<QuizManagerProps> = ({
                       Code: {quiz.code}
                     </span>
                     <span className="text-xs bg-gray-100 text-gray-800 font-medium px-2 py-1 rounded mr-2">
-                      {quiz.questions.length} questions
+                      {quiz.questionCount} questions
                     </span>
                     {quiz.source === 'pdf-content' && (
                       <span className="text-xs bg-green-100 text-green-800 font-medium px-2 py-1 rounded">
