@@ -21,9 +21,14 @@ const authMiddleware = async (req, res, next) => {
         }
         
         // Verify user still exists
-        const [users] = await db.query('SELECT id, role FROM users WHERE id = ?', [userId]);
+        const [users] = await db.query('SELECT id, role, password_changed_at FROM users WHERE id = ?', [userId]);
         if (users.length === 0) {
             return res.status(401).json({ error: 'User not found' });
+        }
+
+        const passwordChangedAt = users[0].password_changed_at ? new Date(users[0].password_changed_at).getTime() : 0;
+        if (decoded.pwd !== undefined && Number(decoded.pwd) < passwordChangedAt) {
+            return res.status(401).json({ error: 'Token expired after password change' });
         }
 
         req.user = {

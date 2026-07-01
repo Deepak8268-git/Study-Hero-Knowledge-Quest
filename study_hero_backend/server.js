@@ -1,10 +1,15 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
 const ensureCommercialSchema = require('./src/config/ensureCommercialSchema');
+const requestLogger = require('./src/middleware/requestLogger');
+const { authLimiter } = require('./src/middleware/rateLimiters');
 
 const app = express();
+app.set('trust proxy', 1);
 const isProduction = process.env.NODE_ENV === 'production';
 
 const configuredOrigins = [
@@ -23,6 +28,8 @@ if (!isProduction) {
 }
 
 // Middleware
+app.use(helmet());
+app.use(requestLogger);
 app.use(cors({
     origin: (origin, callback) => {
         if (!origin || allowedOrigins.has(origin)) {
@@ -33,7 +40,8 @@ app.use(cors({
     },
     credentials: true
 }));
-app.use(express.json());
+app.use(cookieParser());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '1mb' }));
 
 // Import routes
 const userRoutes = require('./src/routes/userRoutes');
@@ -45,7 +53,7 @@ app.use('/api/quiz', quizRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
 const authRoutes = require('./src/routes/authRoutes');
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 
 // Use routes
 app.use('/api/users', userRoutes);

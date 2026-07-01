@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { clearAuthToken, getAuthRole, getAuthToken } from '../services/api';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { getAuthRole, getAuthToken, logout } from '../services/api';
 
 const Header: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const isAuthenticated = getAuthToken();
   const userRole = getAuthRole();
 
-  const handleLogout = () => {
-    clearAuthToken();
-    window.location.href = '/';
+  const handleLogout = async () => {
+    await logout();
+    navigate('/');
   };
 
   const getDashboardLink = () => {

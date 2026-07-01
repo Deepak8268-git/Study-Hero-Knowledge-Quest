@@ -41,7 +41,68 @@ async function ensureCommercialSchema() {
     await ensureColumn('users', 'batch', 'VARCHAR(50) NULL');
     await ensureColumn('users', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
     await ensureColumn('users', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+    await ensureColumn('users', 'email_verified', 'BOOLEAN DEFAULT FALSE');
+    await ensureColumn('users', 'email_verified_at', 'TIMESTAMP NULL');
+    await ensureColumn('users', 'last_login_at', 'TIMESTAMP NULL');
+    await ensureColumn('users', 'password_changed_at', 'TIMESTAMP NULL');
+    await ensureColumn('users', 'failed_login_attempts', 'INT DEFAULT 0');
+    await ensureColumn('users', 'locked_until', 'TIMESTAMP NULL');
+    await ensureColumn('users', 'verification_sent_at', 'TIMESTAMP NULL');
 
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            refresh_token_hash VARCHAR(128) NOT NULL UNIQUE,
+            remember_me BOOLEAN DEFAULT FALSE,
+            user_agent VARCHAR(500),
+            ip_address VARCHAR(100),
+            expires_at TIMESTAMP NOT NULL,
+            revoked_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_used_at TIMESTAMP NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            token_hash VARCHAR(128) NOT NULL UNIQUE,
+            expires_at TIMESTAMP NOT NULL,
+            used_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS email_verification_tokens (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            token_hash VARCHAR(128) NOT NULL UNIQUE,
+            expires_at TIMESTAMP NOT NULL,
+            used_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT,
+            action VARCHAR(100) NOT NULL,
+            entity_type VARCHAR(50) DEFAULT 'auth',
+            entity_id INT,
+            ip_address VARCHAR(100),
+            user_agent VARCHAR(500),
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+    `);
     await db.query(`
         CREATE TABLE IF NOT EXISTS courses (
             id INT PRIMARY KEY AUTO_INCREMENT,

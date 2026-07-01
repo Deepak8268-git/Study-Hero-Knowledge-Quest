@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
-import { getAuthRole, getAuthToken } from '../services/api';
+import { getAuthRole, getAuthToken, login } from '../services/api';
 
 const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -26,35 +26,11 @@ const LoginPage: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      const apiUrl = process.env.REACT_APP_API_URL;
-
-      if (!apiUrl) {
-        setError('API URL is not configured. Please contact support.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      const response = await fetch(`${apiUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        localStorage.setItem('authToken', data.token);
-
-        navigate(data.user.role === 'teacher' ? '/teacher-dashboard' : '/student-dashboard');
-      } else {
-        setError(data.message || data.error || 'Login failed');
-        setIsSubmitting(false);
-      }
+      const data = await login(email, password, rememberMe);
+      navigate(data.user.role === 'teacher' ? '/teacher-dashboard' : '/student-dashboard');
     } catch (error) {
-      console.error('Network error:', error);
-      setError('Network error. Please try again.');
+      console.error('Login error:', error);
+      setError(error instanceof Error ? error.message : 'Login failed');
       setIsSubmitting(false);
     }
   };
@@ -148,9 +124,9 @@ const LoginPage: React.FC = () => {
               </div>
 
               <div className="text-sm">
-                <a href="#" className="font-medium text-primary hover:text-secondary">
+                <Link to="/forgot-password" className="font-medium text-primary hover:text-secondary">
                   Forgot your password?
-                </a>
+                </Link>
               </div>
             </div>
 

@@ -1,7 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import './styles/App.css';
-import { clearAuthToken, getAuthRole, getAuthToken, isTokenExpired } from './services/api';
+import { clearAuthToken, getAuthRole, getAuthToken, isTokenExpired, refreshAccessToken } from './services/api';
 
 // Pages
 import HomePage from './pages/HomePage';
@@ -15,14 +15,58 @@ import TeacherDashboardPage from './pages/TeacherDashboardPage';
 import QuizPage from './pages/QuizPage';
 import CoursePage from './pages/CoursePage';
 import AssignmentPage from './pages/AssignmentPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
+import ChangePasswordPage from './pages/ChangePasswordPage';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) => {
-  const token = getAuthToken();
-  const userRole = getAuthRole();
+  const [isChecking, setIsChecking] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userRole, setUserRole] = useState<string | null>(null);
 
-  if (!token || isTokenExpired()) {
-    clearAuthToken();
+  useEffect(() => {
+    let active = true;
+
+    const verifySession = async () => {
+      let token = getAuthToken();
+
+      if (!token) {
+        if (active) {
+          setIsAuthenticated(false);
+          setIsChecking(false);
+        }
+        return;
+      }
+
+      if (isTokenExpired()) {
+        token = await refreshAccessToken();
+      }
+
+      if (!active) return;
+
+      if (!token) {
+        clearAuthToken();
+        setIsAuthenticated(false);
+      } else {
+        setUserRole(getAuthRole());
+        setIsAuthenticated(true);
+      }
+      setIsChecking(false);
+    };
+
+    verifySession();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (isChecking) {
+    return <div className="min-h-screen flex items-center justify-center text-gray-600">Loading...</div>;
+  }
+
+  if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
@@ -56,6 +100,9 @@ const App: React.FC = () => {
         <Route path="/" element={<HomePage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="/about" element={<AboutPage />} />
         <Route path="/features" element={<FeaturesPage />} />
 
@@ -102,6 +149,14 @@ const App: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['teacher']}>
               <AssignmentPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/change-password" 
+          element={
+            <ProtectedRoute allowedRoles={['student', 'teacher']}>
+              <ChangePasswordPage />
             </ProtectedRoute>
           } 
         />

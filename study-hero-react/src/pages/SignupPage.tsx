@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
+import { getAuthToken, register } from '../services/api';
 
 const SignupPage: React.FC = () => {
   const [fullName, setFullName] = useState('');
@@ -16,7 +17,7 @@ const SignupPage: React.FC = () => {
   
   // Check if already authenticated
   useEffect(() => {
-    if (localStorage.getItem('authToken')) {
+    if (getAuthToken()) {
       navigate('/dashboard');
     }
   }, [navigate]);
@@ -24,63 +25,51 @@ const SignupPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
-    // Validation
+
     if (!fullName || !email || !password || !confirmPassword) {
       setError('All fields are required.');
       return;
     }
-    
+
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
       return;
     }
-    
+
+    const passwordIssues = [];
+    if (password.length < 8) passwordIssues.push('at least 8 characters');
+    if (!/[a-z]/.test(password)) passwordIssues.push('a lowercase letter');
+    if (!/[A-Z]/.test(password)) passwordIssues.push('an uppercase letter');
+    if (!/\d/.test(password)) passwordIssues.push('a number');
+    if (!/[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\/;']/.test(password)) passwordIssues.push('a special character');
+
+    if (passwordIssues.length > 0) {
+      setError(`Password must include ${passwordIssues.join(', ')}.`);
+      return;
+    }
+
     if (!agreeTerms) {
       setError('You must agree to the terms and conditions.');
       return;
     }
-    
+
     setIsSubmitting(true);
-    
+
     try {
-      const apiUrl = process.env.REACT_APP_API_URL;
-
-      if (!apiUrl) {
-        setError('API URL is not configured. Please contact support.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      const response = await fetch(`${apiUrl}/api/auth/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username: fullName,
-          email,
-          password,
-          role: userType
-        }),
+      await register({
+        username: fullName,
+        email,
+        password,
+        role: userType
       });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        // Registration successful
-        navigate('/login');
-      } else {
-        setError(data.message || 'Registration failed');
-      }
+      navigate('/login', { state: { message: 'Account created. Please check your email to verify your address.' } });
     } catch (error) {
-      console.error('âš ï¸ Network error:', error);
-      setError('Network error. Please try again.');
+      console.error('Registration error:', error);
+      setError(error instanceof Error ? error.message : 'Registration failed');
     } finally {
       setIsSubmitting(false);
     }
   };
-  
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       <Header />
