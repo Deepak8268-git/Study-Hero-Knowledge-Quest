@@ -1,36 +1,31 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Header from '../components/Header';
-import Footer from '../components/Footer';
+import { clearAuthToken, getAuthRole, getAuthToken, isTokenExpired } from '../services/api';
 
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   
   useEffect(() => {
-    // Check if user is authenticated
-    const token = localStorage.getItem('authToken');
-    const userRole = localStorage.getItem('userRole');
+    const token = getAuthToken();
+    const userRole = getAuthRole();
 
-    if (!token) {
+    if (!token || isTokenExpired()) {
+      clearAuthToken();
       navigate('/login');
       return;
     }
 
-    // Redirect based on role
     if (userRole === 'teacher') {
       navigate('/teacher-dashboard');
     } else if (userRole === 'student') {
       navigate('/student-dashboard');
     } else {
-      // If role is not set, clear auth and redirect to login
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('userRole');
-      localStorage.removeItem('userName');
+      clearAuthToken();
       navigate('/login');
     }
   }, [navigate]);
   
-  return null; // This component only handles routing
+  return null;
 };
 
-export default DashboardPage; 
+export default DashboardPage;

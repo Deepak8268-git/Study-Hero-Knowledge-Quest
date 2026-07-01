@@ -1,18 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { clearAuthToken, getAuthRole, getAuthToken } from '../services/api';
 
 const Header: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const location = useLocation();
-  const isAuthenticated = localStorage.getItem('authToken');
-  const userRole = localStorage.getItem('userRole');
-  const userName = localStorage.getItem('userName');
+  const isAuthenticated = getAuthToken();
+  const userRole = getAuthRole();
 
   const handleLogout = () => {
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('userRole');
-    localStorage.removeItem('userName');
+    clearAuthToken();
     window.location.href = '/';
   };
 
@@ -210,4 +208,4 @@ const Header: React.FC = () => {
   );
 };
 
-export default Header; 
+export default Header;

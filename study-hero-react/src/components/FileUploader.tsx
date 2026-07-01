@@ -1,33 +1,17 @@
-import React, { useState, useRef, ChangeEvent } from 'react';
-import { nanoid } from 'nanoid';
+import React, { useState, useRef, ChangeEvent, useEffect } from 'react';
+import { apiRequest } from '../services/api';
 
-interface QuizQuestion {
+interface CourseOption {
   id: number;
-  question: string;
-  options: string[];
-  correctAnswer: string;
-  explanation?: string;
-}
-
-interface Quiz {
-  id: string;
   title: string;
-  description: string;
-  questions: QuizQuestion[];
-  isActive: boolean;
-  duration?: number;
-  passingScore?: number;
-  quizCode?: string;
-  code: string;
-  source?: string;
-  createdAt: string;
 }
 
 interface FileUploaderProps {
-  onQuizGenerated: (quiz: Quiz) => void;
+  courses?: CourseOption[];
+  onQuizGenerated: () => void;
 }
 
-const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
+const FileUploader: React.FC<FileUploaderProps> = ({ courses = [], onQuizGenerated }) => {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -37,22 +21,27 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
   const [fileName, setFileName] = useState<string>("");
   const [quizTitle, setQuizTitle] = useState<string>("");
   const [quizDescription, setQuizDescription] = useState<string>("");
+  const [selectedCourseId, setSelectedCourseId] = useState<string>("");
   const [mlStatus, setMlStatus] = useState<string>("");
   const [processingStage, setProcessingStage] = useState<string>("");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    if (!selectedCourseId && courses.length > 0) {
+      setSelectedCourseId(String(courses[0].id));
+    }
+  }, [courses, selectedCourseId]);
+
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
       
-      // Check if the file is a PDF
       if (selectedFile.type !== 'application/pdf') {
         setError('Please upload a PDF file');
         return;
       }
       
-      // Check file size (max 10MB)
       if (selectedFile.size > 10 * 1024 * 1024) {
         setError('File size exceeds 10MB');
         return;
@@ -62,8 +51,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
       setFileName(selectedFile.name);
       setError(null);
       
-      // Auto-generate quiz title from file name
-      const nameWithoutExtension = selectedFile.name.replace('.pdf', '');
+      const nameWithoutExtension = selectedFile.name.replace(/\.pdf$/i, '');
       setQuizTitle(`Quiz on ${nameWithoutExtension}`);
     }
   };
@@ -78,155 +66,56 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
       setError('Please provide a quiz title');
       return;
     }
+
+    if (!selectedCourseId) {
+      setError('Please select a course for this quiz');
+      return;
+    }
     
     setUploading(true);
-    setUploadProgress(0);
-    
-    // Simulate upload progress
-    const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev >= 95) {
-          clearInterval(interval);
-          return prev;
-        }
-        return prev + 5;
-      });
-    }, 150);
-    
-    // Simulate API call for file upload
-    setTimeout(() => {
-      clearInterval(interval);
-      setUploadProgress(100);
-      setFileUploaded(true);
-      setUploading(false);
-      
-      // Start quiz generation after successful upload
-      generateQuiz();
-    }, 2000);
-  };
-  
-  const generateQuiz = async () => {
     setGenerating(true);
-    setMlStatus("Initializing ML model...");
-    
-    // Simulate ML processing stages with realistic messages
-    setTimeout(() => {
-      setMlStatus("Processing PDF content...");
-      setProcessingStage("text_extraction");
-    }, 1000);
-    
-    setTimeout(() => {
-      setMlStatus("Analyzing document structure...");
-      setProcessingStage("structure_analysis");
-    }, 3000);
-    
-    setTimeout(() => {
-      setMlStatus("Identifying key concepts...");
-      setProcessingStage("concept_extraction");
-    }, 5000);
-    
-    setTimeout(() => {
-      setMlStatus("Generating questions based on content...");
-      setProcessingStage("question_generation");
-    }, 7000);
-    
-    setTimeout(() => {
-      setMlStatus("Creating answer options...");
-      setProcessingStage("answer_creation");
-    }, 9000);
-    
-    setTimeout(() => {
-      setMlStatus("Finalizing quiz...");
-      setProcessingStage("finalizing");
-    }, 11000);
-    
-    // After simulation completes, generate the quiz
-    setTimeout(() => {
-      const generatedQuiz = createSampleQuizFromPdf();
-      onQuizGenerated(generatedQuiz);
-      setGenerating(false);
+    setFileUploaded(true);
+    setUploadProgress(20);
+    setMlStatus('Uploading PDF to backend...');
+    setProcessingStage('text_extraction');
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('course_id', selectedCourseId);
+      formData.append('title', quizTitle);
+      formData.append('description', quizDescription);
+      formData.append('settings', JSON.stringify({
+        timeLimit: 20,
+        preventTabSwitch: true,
+        randomizeQuestions: true,
+        showOneQuestionAtATime: true,
+        requireWebcam: false,
+        passingScore: 60
+      }));
+
+      setUploadProgress(50);
+      setMlStatus('Extracting PDF text and generating quiz...');
+      setProcessingStage('question_generation');
+
+      await apiRequest('/api/quiz/generate-from-file', {
+        method: 'POST',
+        body: formData
+      });
+
+      setUploadProgress(100);
+      setMlStatus('Quiz saved successfully');
+      setProcessingStage('finalizing');
+      onQuizGenerated();
       resetForm();
-    }, 12000);
-  };
-  
-  const createSampleQuizFromPdf = (): Quiz => {
-    // Generate a random code (6 characters)
-    const quizCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-    
-    return {
-      id: nanoid(),
-      title: quizTitle,
-      description: quizDescription,
-      questions: [
-        {
-          id: 1,
-          question: "What is the main topic covered in this PDF?",
-          options: [
-            "The content from the uploaded PDF",
-            "Something unrelated to the PDF",
-            "Random information",
-            "None of the above"
-          ],
-          correctAnswer: "The content from the uploaded PDF",
-          explanation: "This question is based on the main subject of the uploaded document."
-        },
-        {
-          id: 2,
-          question: "According to the PDF, which concept is most important?",
-          options: [
-            "Key concept from the PDF",
-            "Unrelated concept",
-            "Partially related concept",
-            "Concept mentioned briefly"
-          ],
-          correctAnswer: "Key concept from the PDF",
-          explanation: "This represents a central idea discussed extensively in the document."
-        },
-        {
-          id: 3,
-          question: "What conclusion can be drawn from the material?",
-          options: [
-            "Conclusion based on PDF content",
-            "Opposite conclusion",
-            "Unrelated conclusion",
-            "No conclusion possible"
-          ],
-          correctAnswer: "Conclusion based on PDF content",
-          explanation: "This follows directly from the information presented in the document."
-        },
-        {
-          id: 4,
-          question: "Which of these terms appears most frequently in the document?",
-          options: [
-            "Important term from PDF",
-            "Term not in the PDF",
-            "Rarely mentioned term",
-            "Generic term"
-          ],
-          correctAnswer: "Important term from PDF",
-          explanation: "This term appears repeatedly throughout the document, indicating its significance."
-        },
-        {
-          id: 5,
-          question: "What is a practical application of the knowledge in this PDF?",
-          options: [
-            "Relevant application",
-            "Unrelated application",
-            "Theoretical application only",
-            "No practical applications"
-          ],
-          correctAnswer: "Relevant application",
-          explanation: "This represents how the information can be applied in real-world contexts."
-        }
-      ],
-      isActive: false,
-      duration: 600, // 10 minutes in seconds
-      passingScore: 60,
-      quizCode: quizCode,
-      code: quizCode,
-      createdAt: new Date().toISOString(),
-      source: 'pdf-content'
-    };
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Failed to generate quiz');
+      setFileUploaded(false);
+    } finally {
+      setUploading(false);
+      setGenerating(false);
+    }
   };
   
   const resetForm = () => {
@@ -239,7 +128,6 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
     setMlStatus("");
     setProcessingStage("");
     
-    // Reset file input
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -284,6 +172,22 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
           {file && (
             <>
               <div className="mb-4">
+                <label htmlFor="courseId" className="block text-sm font-medium text-gray-700 mb-1">
+                  Course
+                </label>
+                <select
+                  id="courseId"
+                  value={selectedCourseId}
+                  onChange={(e) => setSelectedCourseId(e.target.value)}
+                  className="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md"
+                >
+                  {courses.map((course) => (
+                    <option key={course.id} value={course.id}>{course.title}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mb-4">
                 <label htmlFor="quizTitle" className="block text-sm font-medium text-gray-700 mb-1">
                   Quiz Title
                 </label>
@@ -322,9 +226,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
           <button
             type="button"
             onClick={handleUpload}
-            disabled={!file || uploading}
+            disabled={!file || uploading || courses.length === 0}
             className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/80 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary ${
-              !file || uploading ? 'opacity-50 cursor-not-allowed' : ''
+              !file || uploading || courses.length === 0 ? 'opacity-50 cursor-not-allowed' : ''
             }`}
           >
             {uploading ? 'Uploading...' : 'Upload and Generate Quiz'}
@@ -357,7 +261,6 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
                   This may take a minute or two...
                 </p>
                 
-                {/* Processing stages progress */}
                 <div className="mt-6 w-full max-w-md">
                   <div className="flex justify-between mb-1">
                     <span className="text-xs font-medium text-gray-500">Processing Stage</span>
@@ -366,12 +269,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
                     <div 
                       className="bg-primary h-2.5 rounded-full" 
                       style={{ 
-                        width: processingStage === 'text_extraction' ? '15%' :
-                               processingStage === 'structure_analysis' ? '30%' :
-                               processingStage === 'concept_extraction' ? '50%' :
-                               processingStage === 'question_generation' ? '70%' :
-                               processingStage === 'answer_creation' ? '85%' :
-                               processingStage === 'finalizing' ? '95%' : '5%'
+                        width: processingStage === 'text_extraction' ? '35%' :
+                               processingStage === 'question_generation' ? '75%' :
+                               processingStage === 'finalizing' ? '100%' : '10%'
                       }}
                     ></div>
                   </div>
@@ -404,4 +304,4 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onQuizGenerated }) => {
   );
 };
 
-export default FileUploader; 
+export default FileUploader;

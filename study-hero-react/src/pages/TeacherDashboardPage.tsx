@@ -4,6 +4,7 @@ import Header from '../components/Header';
 import Footer from '../components/Footer';
 import FileUploader from '../components/FileUploader';
 import QuizManager from '../components/QuizManager';
+import { apiRequest, getAuthToken } from '../services/api';
 
 interface Course {
   id: number;
@@ -100,205 +101,136 @@ const TeacherDashboardPage: React.FC = () => {
   const [activeView, setActiveView] = useState<'quizCreated' | 'quizPreview'>('quizCreated');
   const [generatedQuiz, setGeneratedQuiz] = useState<StoredQuiz | null>(null);
   
-  useEffect(() => {
-    // Check if user is authenticated
-    const token = localStorage.getItem('authToken');
-    if (!token) {
-      navigate('/login');
-      return;
-    }
-    
-    // Simulate API call to get dashboard data
-    setTimeout(() => {
-      setCourses([
-        {
-          id: 1,
-          title: 'Introduction to Computer Science',
-          students: 45,
-          imageUrl: 'https://public.readdy.ai/ai/img_res/c2b6a1c2a0a2f01b3cebf7bc4b28df92.jpg',
-          lastUpdated: '2023-06-02'
-        },
-        {
-          id: 2,
-          title: 'Advanced Mathematics',
-          students: 28,
-          imageUrl: 'https://public.readdy.ai/ai/img_res/1e8954d5adaed647d599a83d143e7fe8.jpg',
-          lastUpdated: '2023-06-05'
-        },
-        {
-          id: 3,
-          title: 'Biology 101',
-          students: 36,
-          imageUrl: 'https://public.readdy.ai/ai/img_res/82c3d797823dc44d0fcf84c4b9a1c8da.jpg',
-          lastUpdated: '2023-06-01'
-        }
-      ]);
-      
-      setStudents([
-        {
-          id: 1,
-          name: 'John Doe',
-          email: 'john.doe@example.com',
-          progress: 75,
-          avatar: 'JD'
-        },
-        {
-          id: 2,
-          name: 'Jane Smith',
-          email: 'jane.smith@example.com',
-          progress: 92,
-          avatar: 'JS'
-        },
-        {
-          id: 3,
-          name: 'Robert Johnson',
-          email: 'robert.johnson@example.com',
-          progress: 45,
-          avatar: 'RJ'
-        },
-        {
-          id: 4,
-          name: 'Sarah Williams',
-          email: 'sarah.williams@example.com',
-          progress: 68,
-          avatar: 'SW'
-        },
-        {
-          id: 5,
-          name: 'Michael Brown',
-          email: 'michael.brown@example.com',
-          progress: 33,
-          avatar: 'MB'
-        }
-      ]);
-      
-      setPendingAssignments([
-        {
-          id: 1,
-          title: 'Algorithm Analysis Report',
-          dueDate: '2023-06-15',
-          course: 'Computer Science',
-          submissions: 32,
-          totalStudents: 45
-        },
-        {
-          id: 2,
-          title: 'Calculus Problem Set',
-          dueDate: '2023-06-12',
-          course: 'Mathematics',
-          submissions: 15,
-          totalStudents: 28
-        },
-        {
-          id: 3,
-          title: 'Lab Report: Cell Division',
-          dueDate: '2023-06-10',
-          course: 'Biology',
-          submissions: 20,
-          totalStudents: 36
-        }
-      ]);
-      
-      // Load any created quizzes from localStorage
-      const storedQuizzes = localStorage.getItem('generatedQuizzes');
-      if (storedQuizzes) {
-        try {
-          const parsedQuizzes = JSON.parse(storedQuizzes);
-          setCreatedQuizzes(parsedQuizzes);
-        } catch (error) {
-          console.error('Error parsing stored quizzes:', error);
-        }
-      }
-      
-      setLoading(false);
-    }, 1500);
-  }, [navigate]);
-  
-  // Function to update localStorage whenever quizzes change
-  const updateStoredQuizzes = (updatedQuizzes: Quiz[]) => {
-    localStorage.setItem('generatedQuizzes', JSON.stringify(updatedQuizzes));
-  };
-  
-  const handleQuizGenerated = (quiz: Quiz) => {
-    // Generate a random 6-character code
-    const quizCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-    
-    // Create the quiz with settings
-    const quizWithSettings: StoredQuiz = {
-      ...quiz,
-      code: quizCode,
+  const loadDashboard = async () => {
+    const data = await apiRequest<any>('/api/dashboard/teacher');
+    const mappedCourses: Course[] = (data.courses || []).map((course: any) => ({
+      id: Number(course.id),
+      title: course.title,
+      students: Number(course.students || 0),
+      imageUrl: 'https://public.readdy.ai/ai/img_res/c2b6a1c2a0a2f01b3cebf7bc4b28df92.jpg',
+      lastUpdated: course.updated_at || course.created_at || new Date().toISOString()
+    }));
+
+    const mappedAssignments: Assignment[] = (data.assignments || []).map((assignment: any) => ({
+      id: Number(assignment.id),
+      title: assignment.title,
+      dueDate: assignment.due_date || assignment.dueDate || new Date().toISOString(),
+      course: assignment.course,
+      submissions: Number(assignment.submissions || 0),
+      totalStudents: Number(assignment.totalStudents || 0)
+    }));
+
+    const mappedQuizzes: StoredQuiz[] = (data.quizzes || []).map((quiz: any) => ({
+      id: String(quiz.id),
+      title: quiz.title,
+      description: quiz.description || '',
+      questions: Array(Number(quiz.questionCount || 0)).fill({
+        id: 0,
+        question: '',
+        options: [],
+        correctAnswer: ''
+      }),
+      isActive: quiz.status === 'active',
+      scheduledDate: quiz.scheduledDate || undefined,
+      duration: Number(quiz.duration || 20),
+      preventTabSwitch: true,
+      randomizeQuestions: true,
+      showOneQuestionAtATime: true,
+      requireWebcam: false,
+      passingScore: Number(quiz.passingScore || 60),
+      quizCode: quiz.code || undefined,
+      code: quiz.code || '',
       settings: {
-        timeLimit: 20, // Default 20 minutes
+        timeLimit: Number(quiz.duration || 20),
         preventTabSwitch: true,
         randomizeQuestions: true,
         showOneQuestionAtATime: true,
         requireWebcam: false
       },
-      createdAt: new Date().toISOString(),
-      source: 'pdf-content' // Mark this quiz as generated from PDF content
-    };
-    
-    // Save the quiz to localStorage
-    const existingQuizzes = JSON.parse(localStorage.getItem('generatedQuizzes') || '[]');
-    localStorage.setItem('generatedQuizzes', JSON.stringify([...existingQuizzes, quizWithSettings]));
-    
-    // Update the state
-    setGeneratedQuiz(quizWithSettings);
+      createdAt: quiz.createdAt || new Date().toISOString(),
+      source: quiz.source || 'manual'
+    }));
+
+    setCourses(mappedCourses);
+    setStudents(data.students || []);
+    setPendingAssignments(mappedAssignments);
+    setCreatedQuizzes(mappedQuizzes);
+    setQuizzes(mappedQuizzes as unknown as Quiz[]);
+  };
+
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+
+    loadDashboard()
+      .catch((error) => {
+        console.error('Failed to load teacher dashboard:', error);
+      })
+      .finally(() => setLoading(false));
+  }, [navigate]);
+
+  const handleQuizGenerated = async () => {
+    await loadDashboard();
     setCreatingQuiz(false);
     setActiveView('quizCreated');
-    setCreatedQuizzes([...createdQuizzes, quizWithSettings]);
-    
-    // Save the quiz code
-    const existingCodes = JSON.parse(localStorage.getItem('quizCodes') || '[]');
-    localStorage.setItem('quizCodes', JSON.stringify([...existingCodes, quizCode]));
   };
-  
-  const generateQuizCode = (): string => {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    const codeLength = 6;
-    let result = '';
-    
-    for (let i = 0; i < codeLength; i++) {
-      result += characters.charAt(Math.floor(Math.random() * characters.length));
-    }
-    
-    const existingCodes = quizzes.map(quiz => quiz.quizCode);
-    if (existingCodes.includes(result)) {
-      return generateQuizCode();
-    }
-    
-    return result;
+
+  const handleActivateQuiz = async (quizId: string, settings: Partial<Quiz>) => {
+    const response = await apiRequest<{ quizCode: string }>(`/api/quiz/${quizId}/activate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        scheduledDate: settings.scheduledDate,
+        settings: {
+          timeLimit: settings.duration || 20,
+          preventTabSwitch: settings.preventTabSwitch,
+          randomizeQuestions: settings.randomizeQuestions,
+          showOneQuestionAtATime: settings.showOneQuestionAtATime,
+          requireWebcam: settings.requireWebcam,
+          passingScore: settings.passingScore || 60
+        }
+      })
+    });
+
+    await loadDashboard();
+    alert(`Quiz activated successfully! Quiz Code: ${response.quizCode}\n\nShare this code with your students.`);
   };
-  
-  const handleActivateQuiz = (quizId: string, settings: Partial<Quiz>) => {
-    const quizCode = generateQuizCode();
-    
-    const updatedQuizzes = quizzes.map(quiz => 
-      quiz.id === quizId 
-        ? { ...quiz, ...settings, isActive: true, quizCode } 
-        : quiz
-    );
-    
-    setQuizzes(updatedQuizzes);
-    updateStoredQuizzes(updatedQuizzes);
-    
-    console.log(`Quiz ${quizId} activated with code: ${quizCode}`);
-    
-    // Show a confirmation alert with the quiz code
-    alert(`Quiz activated successfully! Quiz Code: ${quizCode}\n\nShare this code with your students.`);
+
+  const handleEditQuiz = async (quizId: string) => {
+    const quiz = quizzes.find((item) => String(item.id) === String(quizId));
+    if (!quiz) return;
+
+    const title = window.prompt('Quiz title', quiz.title);
+    if (title === null) return;
+
+    const description = window.prompt('Quiz description', quiz.description || '');
+    if (description === null) return;
+
+    await apiRequest(`/api/quiz/${quizId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        title,
+        description,
+        settings: {
+          timeLimit: quiz.duration || 20,
+          preventTabSwitch: quiz.preventTabSwitch,
+          randomizeQuestions: quiz.randomizeQuestions,
+          showOneQuestionAtATime: quiz.showOneQuestionAtATime,
+          requireWebcam: quiz.requireWebcam,
+          passingScore: quiz.passingScore || 60
+        }
+      })
+    });
+
+    await loadDashboard();
   };
-  
-  const handleEditQuiz = (quizId: string) => {
-    // In a real app, we would navigate to an edit page or open a modal
-    alert(`Edit quiz ${quizId}`);
+
+  const handleDeleteQuiz = async (quizId: string) => {
+    await apiRequest(`/api/quiz/${quizId}`, { method: 'DELETE' });
+    await loadDashboard();
   };
-  
-  const handleDeleteQuiz = (quizId: string) => {
-    const updatedQuizzes = quizzes.filter(quiz => quiz.id !== quizId);
-    setQuizzes(updatedQuizzes);
-    updateStoredQuizzes(updatedQuizzes);
-  };
-  
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col bg-gray-50">
@@ -638,7 +570,7 @@ const TeacherDashboardPage: React.FC = () => {
           
           {activeTab === 'generate-quiz' && (
             <div className="max-w-3xl mx-auto">
-              <FileUploader onQuizGenerated={handleQuizGenerated} />
+              <FileUploader courses={courses} onQuizGenerated={handleQuizGenerated} />
             </div>
           )}
           

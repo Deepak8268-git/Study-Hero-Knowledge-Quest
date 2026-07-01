@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
+import { getAuthRole, getAuthToken } from '../services/api';
 
 const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -13,8 +14,8 @@ const LoginPage: React.FC = () => {
 
   // Redirect if already authenticated
   useEffect(() => {
-    if (localStorage.getItem('authToken')) {
-      const userRole = localStorage.getItem('userRole');
+    if (getAuthToken()) {
+      const userRole = getAuthRole();
       navigate(userRole === 'teacher' ? '/teacher-dashboard' : '/student-dashboard');
     }
   }, [navigate]);
@@ -44,26 +45,15 @@ const LoginPage: React.FC = () => {
       const data = await response.json();
 
       if (response.ok) {
-        // Save token and user role
         localStorage.setItem('authToken', data.token);
-        localStorage.setItem('userRole', data.user.role);
-        localStorage.setItem('userName', data.user.username);
 
-        // Optionally persist login
-        if (rememberMe) {
-          localStorage.setItem('rememberedEmail', email);
-        } else {
-          localStorage.removeItem('rememberedEmail');
-        }
-
-        // Redirect based on role
         navigate(data.user.role === 'teacher' ? '/teacher-dashboard' : '/student-dashboard');
       } else {
-        setError(data.message || 'Login failed');
+        setError(data.message || data.error || 'Login failed');
         setIsSubmitting(false);
       }
     } catch (error) {
-      console.error('âš ï¸ Network error:', error);
+      console.error('Network error:', error);
       setError('Network error. Please try again.');
       setIsSubmitting(false);
     }
@@ -241,5 +231,3 @@ const LoginPage: React.FC = () => {
 };
 
 export default LoginPage;
-
-

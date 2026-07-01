@@ -1,51 +1,524 @@
 const express = require('express');
-const router = express.Router();
 const axios = require('axios');
-const db = require('../config/db'); // your MySQL connection
+const multer = require('multer');
+const pdfParse = require('pdf-parse');
+const db = require('../config/db');
 const { authMiddleware, teacherMiddleware } = require('../middleware/authMiddleware');
 
-// POST: Generate and store quiz
-router.post('/generate', authMiddleware, teacherMiddleware, async (req, res) => {
-    const { context, course_id, assignment_id } = req.body;
-    const teacher_id = req.user.id; // from auth middleware
+const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+function generateQuizCode() {
+    return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function normalizeSettings(settings = {}) {
+    return {
+        timeLimit: Number(settings.timeLimit || settings.duration || 20),
+        preventTabSwitch: settings.preventTabSwitch !== false,
+        randomizeQuestions: settings.randomizeQuestions !== false,
+        showOneQuestionAtATime: settings.showOneQuestionAtATime !== false,
+        requireWebcam: !!settings.requireWebcam,
+        passingScore: Number(settings.passingScore || 60)
+    };
+}
+
+function parseGeneratedQuiz(text) {
+    const questionBlocks = text
+        .split(/\n(?=Q\d+\.|\d+\.|Question\s+\d+)/i)
+        .map((block) => block.trim())
+        .filter(Boolean);
+
+    return questionBlocks.map((block, index) => {
+        const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
+        const questionLine = lines.shift() || `Question ${index + 1}`;
+        const options = [];
+        let correctAnswer = '';
+
+        for (const line of lines) {
+            const answerMatch = line.match(/^Correct\s*Answer\s*:\s*(.+)$/i);
+            if (answerMatch) {
+                correctAnswer = answerMatch[1].trim();
+                continue;
+            }
+
+            const optionMatch = line.match(/^([A-D])[).:-]?\s*(.+)$/i);
+            if (optionMatch) {
+                options.push({ label: optionMatch[1].toUpperCase(), text: optionMatch[2].trim() });
+            }
+        }
+
+        const matchedCorrect = options.find((option) =>
+            option.label.toLowerCase() === correctAnswer.toLowerCase() ||
+            option.text.toLowerCase() === correctAnswer.toLowerCase()
+        );
+
+        return {
+            question: questionLine.replace(/^(Q\d+\.|\d+\.|Question\s+\d+[:.)-]?)\s*/i, '').trim(),
+            options: options.map((option) => option.text),
+            correctAnswer: matchedCorrect ? matchedCorrect.text : correctAnswer,
+            explanation: ''
+        };
+    }).filter((question) => question.question && question.options.length >= 2 && question.correctAnswer);
+}
+
+async function logActivity({ actorId, targetUserId = null, courseId = null, entityType, entityId, action, metadata = null }) {
+    await db.query(`
+        INSERT INTO activity_events (actor_id, target_user_id, course_id, entity_type, entity_id, action, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [actorId, targetUserId, courseId, entityType, entityId, action, metadata ? JSON.stringify(metadata) : null]);
+}
+
+async function saveQuiz({ title, description, course_id, assignment_id = null, teacher_id, questions, settings = {}, source = 'manual', quizText = null }) {
+    const normalizedSettings = normalizeSettings(settings);
+    const quizCode = generateQuizCode();
+    const connection = await db.getConnection();
 
     try {
-        // 1. Call Mistral API
+        await connection.beginTransaction();
+
+        const [quizResult] = await connection.query(`
+            INSERT INTO quizzes (
+                course_id, assignment_id, teacher_id, quiz_text, title, description, quiz_code,
+                status, duration_minutes, passing_score, settings_json, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)
+        `, [
+            course_id,
+            assignment_id || null,
+            teacher_id,
+            quizText || JSON.stringify(questions),
+            title,
+            description || '',
+            quizCode,
+            normalizedSettings.timeLimit,
+            normalizedSettings.passingScore,
+            JSON.stringify(normalizedSettings),
+            source
+        ]);
+
+        const quizId = quizResult.insertId;
+
+        for (let questionIndex = 0; questionIndex < questions.length; questionIndex++) {
+            const question = questions[questionIndex];
+            const [questionResult] = await connection.query(`
+                INSERT INTO quiz_questions (quiz_id, question_text, explanation, display_order)
+                VALUES (?, ?, ?, ?)
+            `, [quizId, question.question, question.explanation || '', questionIndex + 1]);
+
+            for (let optionIndex = 0; optionIndex < question.options.length; optionIndex++) {
+                const option = question.options[optionIndex];
+                await connection.query(`
+                    INSERT INTO quiz_options (question_id, option_text, is_correct, display_order)
+                    VALUES (?, ?, ?, ?)
+                `, [questionResult.insertId, option, option === question.correctAnswer, optionIndex + 1]);
+            }
+        }
+
+        await connection.commit();
+        return { quizId, quizCode };
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+}
+
+async function getQuizWithQuestions(quizId) {
+    const [quizzes] = await db.query(`
+        SELECT q.*, c.title AS courseName
+        FROM quizzes q
+        JOIN courses c ON c.id = q.course_id
+        WHERE q.id = ?
+    `, [quizId]);
+
+    if (quizzes.length === 0) {
+        return null;
+    }
+
+    const quiz = quizzes[0];
+    const [questions] = await db.query(`
+        SELECT id, question_text AS question, explanation
+        FROM quiz_questions
+        WHERE quiz_id = ?
+        ORDER BY display_order ASC, id ASC
+    `, [quizId]);
+
+    for (const question of questions) {
+        const [options] = await db.query(`
+            SELECT id, option_text AS text, is_correct AS isCorrect
+            FROM quiz_options
+            WHERE question_id = ?
+            ORDER BY display_order ASC, id ASC
+        `, [question.id]);
+
+        question.options = options.map((option) => option.text);
+        question.optionRecords = options;
+        question.correctAnswer = options.find((option) => option.isCorrect)?.text || '';
+    }
+
+    const settings = quiz.settings_json
+        ? (typeof quiz.settings_json === 'string' ? JSON.parse(quiz.settings_json) : quiz.settings_json)
+        : normalizeSettings({ timeLimit: quiz.duration_minutes, passingScore: quiz.passing_score });
+
+    return {
+        id: String(quiz.id),
+        title: quiz.title || `Quiz #${quiz.id}`,
+        description: quiz.description || '',
+        courseId: quiz.course_id,
+        courseName: quiz.courseName,
+        code: quiz.quiz_code,
+        status: quiz.status,
+        scheduledDate: quiz.scheduled_date,
+        duration: quiz.duration_minutes,
+        passingScore: quiz.passing_score,
+        settings,
+        source: quiz.source,
+        questions
+    };
+}
+
+router.get('/teacher', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const [quizzes] = await db.query(`
+            SELECT q.id, COALESCE(q.title, CONCAT('Quiz #', q.id)) AS title, q.description,
+                   q.quiz_code AS code, q.status, q.scheduled_date AS scheduledDate,
+                   q.duration_minutes AS duration, q.passing_score AS passingScore,
+                   q.source, q.created_at AS createdAt, COUNT(qq.id) AS questionCount
+            FROM quizzes q
+            LEFT JOIN quiz_questions qq ON qq.quiz_id = q.id
+            WHERE q.teacher_id = ?
+            GROUP BY q.id
+            ORDER BY q.created_at DESC
+        `, [req.user.id]);
+
+        res.json(quizzes);
+    } catch (error) {
+        console.error('Teacher quiz list error:', error);
+        res.status(500).json({ error: 'Failed to load quizzes' });
+    }
+});
+
+router.get('/code/:code', authMiddleware, async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT id FROM quizzes WHERE quiz_code = ? AND status = \'active\'', [req.params.code.toUpperCase()]);
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Quiz code not found' });
+        }
+
+        const quiz = await getQuizWithQuestions(rows[0].id);
+        res.json(quiz);
+    } catch (error) {
+        console.error('Quiz code lookup error:', error);
+        res.status(500).json({ error: 'Failed to look up quiz code' });
+    }
+});
+
+router.get('/:id', authMiddleware, async (req, res) => {
+    try {
+        const quiz = await getQuizWithQuestions(req.params.id);
+        if (!quiz) {
+            return res.status(404).json({ error: 'Quiz not found' });
+        }
+
+        res.json(quiz);
+    } catch (error) {
+        console.error('Quiz detail error:', error);
+        res.status(500).json({ error: 'Failed to load quiz' });
+    }
+});
+
+router.post('/', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const { title, description, course_id, assignment_id, questions, settings, source } = req.body;
+
+        if (!title || !course_id || !Array.isArray(questions) || questions.length === 0) {
+            return res.status(400).json({ error: 'Title, course_id, and questions are required' });
+        }
+
+        const [courses] = await db.query('SELECT id FROM courses WHERE id = ? AND teacher_id = ?', [course_id, req.user.id]);
+        if (courses.length === 0) {
+            return res.status(403).json({ error: 'Not authorized for this course' });
+        }
+
+        const saved = await saveQuiz({
+            title,
+            description,
+            course_id,
+            assignment_id,
+            teacher_id: req.user.id,
+            questions,
+            settings,
+            source: source || 'manual'
+        });
+
+        await logActivity({ actorId: req.user.id, courseId: course_id, entityType: 'quiz', entityId: saved.quizId, action: 'created_quiz', metadata: { title } });
+        res.status(201).json({ message: 'Quiz created successfully', quiz_id: saved.quizId, quizCode: saved.quizCode });
+    } catch (error) {
+        console.error('Quiz create error:', error);
+        res.status(500).json({ error: 'Failed to create quiz' });
+    }
+});
+
+router.put('/:id', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const { title, description, settings } = req.body;
+        const normalizedSettings = normalizeSettings(settings || {});
+
+        const [result] = await db.query(`
+            UPDATE quizzes
+            SET title = COALESCE(?, title), description = COALESCE(?, description),
+                duration_minutes = ?, passing_score = ?, settings_json = ?
+            WHERE id = ? AND teacher_id = ?
+        `, [title || null, description || null, normalizedSettings.timeLimit, normalizedSettings.passingScore, JSON.stringify(normalizedSettings), req.params.id, req.user.id]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Quiz not found' });
+        }
+
+        await logActivity({ actorId: req.user.id, entityType: 'quiz', entityId: Number(req.params.id), action: 'updated_quiz' });
+        res.json({ message: 'Quiz updated successfully' });
+    } catch (error) {
+        console.error('Quiz update error:', error);
+        res.status(500).json({ error: 'Failed to update quiz' });
+    }
+});
+
+router.delete('/:id', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const [result] = await db.query('UPDATE quizzes SET status = \'archived\' WHERE id = ? AND teacher_id = ?', [req.params.id, req.user.id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Quiz not found' });
+        }
+
+        await logActivity({ actorId: req.user.id, entityType: 'quiz', entityId: Number(req.params.id), action: 'archived_quiz' });
+        res.json({ message: 'Quiz archived successfully' });
+    } catch (error) {
+        console.error('Quiz delete error:', error);
+        res.status(500).json({ error: 'Failed to archive quiz' });
+    }
+});
+
+router.post('/:id/activate', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const settings = normalizeSettings(req.body.settings || req.body);
+        const quizCode = req.body.quizCode || generateQuizCode();
+        const [result] = await db.query(`
+            UPDATE quizzes
+            SET status = 'active', quiz_code = ?, scheduled_date = ?, duration_minutes = ?, passing_score = ?, settings_json = ?
+            WHERE id = ? AND teacher_id = ?
+        `, [quizCode, req.body.scheduledDate || null, settings.timeLimit, settings.passingScore, JSON.stringify(settings), req.params.id, req.user.id]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Quiz not found' });
+        }
+
+        await logActivity({ actorId: req.user.id, entityType: 'quiz', entityId: Number(req.params.id), action: 'activated_quiz', metadata: { quizCode } });
+        res.json({ message: 'Quiz activated successfully', quizCode });
+    } catch (error) {
+        console.error('Quiz activate error:', error);
+        res.status(500).json({ error: 'Failed to activate quiz' });
+    }
+});
+
+router.post('/generate', authMiddleware, teacherMiddleware, async (req, res) => {
+    const { context, course_id, assignment_id, title, description, settings } = req.body;
+
+    try {
+        if (!process.env.MISTRAL_API_KEY) {
+            return res.status(500).json({ error: 'Mistral API key is not configured' });
+        }
+
+        if (!context || !course_id) {
+            return res.status(400).json({ error: 'context and course_id are required' });
+        }
+
         const response = await axios.post(
             'https://api.mistral.ai/v1/chat/completions',
             {
                 model: 'mistral-medium',
                 messages: [
-                    {
-                        role: 'system',
-                        content: 'You are a quiz generator. Based on the context, create 5 MCQs with 4 options each and specify the correct answer.'
-                    },
-                    {
-                        role: 'user',
-                        content: context
-                    }
+                    { role: 'system', content: 'Create 5 MCQs from the provided context. Use this exact format: Q1. Question?\nA) Option\nB) Option\nC) Option\nD) Option\nCorrect Answer: A' },
+                    { role: 'user', content: context }
                 ]
             },
-            {
-                headers: {
-                    Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
-                    'Content-Type': 'application/json'
-                }
-            }
+            { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`, 'Content-Type': 'application/json' } }
         );
 
         const quizText = response.data.choices[0].message.content;
+        const questions = parseGeneratedQuiz(quizText);
 
-        // 2. Store in MySQL
-        const [result] = await db.execute(
-            `INSERT INTO quizzes (course_id, assignment_id, teacher_id, quiz_text) VALUES (?, ?, ?, ?)`,
-            [course_id, assignment_id || null, teacher_id, quizText]
+        if (questions.length === 0) {
+            return res.status(502).json({ error: 'AI response could not be parsed into quiz questions' });
+        }
+
+        const saved = await saveQuiz({
+            title: title || 'Generated Quiz',
+            description,
+            course_id,
+            assignment_id,
+            teacher_id: req.user.id,
+            questions,
+            settings,
+            source: 'ai-context',
+            quizText
+        });
+
+        await logActivity({ actorId: req.user.id, courseId: course_id, entityType: 'quiz', entityId: saved.quizId, action: 'generated_quiz' });
+        res.json({ message: 'Quiz generated and stored successfully', quiz_id: saved.quizId, quizCode: saved.quizCode, quiz: quizText, questions });
+    } catch (err) {
+        console.error('Quiz generation error:', err.response?.data || err);
+        res.status(500).json({ error: 'Quiz generation or storage failed' });
+    }
+});
+
+router.post('/generate-from-file', authMiddleware, teacherMiddleware, upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'PDF file is required' });
+        }
+
+        if (!process.env.MISTRAL_API_KEY) {
+            return res.status(500).json({ error: 'Mistral API key is not configured' });
+        }
+
+        const courseId = Number(req.body.course_id);
+        const [courses] = await db.query('SELECT id FROM courses WHERE id = ? AND teacher_id = ?', [courseId, req.user.id]);
+        if (courses.length === 0) {
+            return res.status(403).json({ error: 'Not authorized for this course' });
+        }
+
+        const parsedPdf = await pdfParse(req.file.buffer);
+        const context = parsedPdf.text?.trim();
+        if (!context) {
+            return res.status(400).json({ error: 'No readable text was found in the PDF' });
+        }
+
+        const [fileResult] = await db.query(`
+            INSERT INTO uploaded_files (owner_id, course_id, original_name, mime_type, size_bytes)
+            VALUES (?, ?, ?, ?, ?)
+        `, [req.user.id, courseId, req.file.originalname, req.file.mimetype, req.file.size]);
+
+        req.body.context = context;
+        const response = await axios.post(
+            'https://api.mistral.ai/v1/chat/completions',
+            {
+                model: 'mistral-medium',
+                messages: [
+                    { role: 'system', content: 'Create 5 MCQs from the provided PDF text. Use this exact format: Q1. Question?\nA) Option\nB) Option\nC) Option\nD) Option\nCorrect Answer: A' },
+                    { role: 'user', content: context.slice(0, 12000) }
+                ]
+            },
+            { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`, 'Content-Type': 'application/json' } }
         );
 
-        res.json({ message: 'Quiz generated and stored successfully', quiz_id: result.insertId, quiz: quizText });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Quiz generation or storage failed' });
+        const quizText = response.data.choices[0].message.content;
+        const questions = parseGeneratedQuiz(quizText);
+        if (questions.length === 0) {
+            return res.status(502).json({ error: 'AI response could not be parsed into quiz questions' });
+        }
+
+        const saved = await saveQuiz({
+            title: req.body.title || `Quiz on ${req.file.originalname}`,
+            description: req.body.description || '',
+            course_id: courseId,
+            assignment_id: req.body.assignment_id || null,
+            teacher_id: req.user.id,
+            questions,
+            settings: req.body.settings ? JSON.parse(req.body.settings) : {},
+            source: 'pdf-content',
+            quizText
+        });
+
+        await logActivity({ actorId: req.user.id, courseId, entityType: 'quiz', entityId: saved.quizId, action: 'generated_quiz_from_file', metadata: { fileId: fileResult.insertId } });
+        res.status(201).json({ message: 'Quiz generated successfully', quiz_id: saved.quizId, quizCode: saved.quizCode, questions });
+    } catch (error) {
+        console.error('File quiz generation error:', error.response?.data || error);
+        res.status(500).json({ error: 'Failed to generate quiz from file' });
+    }
+});
+
+router.post('/:id/attempts', authMiddleware, async (req, res) => {
+    try {
+        const quiz = await getQuizWithQuestions(req.params.id);
+        if (!quiz) {
+            return res.status(404).json({ error: 'Quiz not found' });
+        }
+
+        const [result] = await db.query(`
+            INSERT INTO quiz_attempts (quiz_id, student_id, total_questions)
+            VALUES (?, ?, ?)
+        `, [req.params.id, req.user.id, quiz.questions.length]);
+
+        res.status(201).json({ attemptId: result.insertId });
+    } catch (error) {
+        console.error('Start attempt error:', error);
+        res.status(500).json({ error: 'Failed to start quiz attempt' });
+    }
+});
+
+router.post('/attempts/:attemptId/submit', authMiddleware, async (req, res) => {
+    const connection = await db.getConnection();
+
+    try {
+        const { answers = {}, violations = [] } = req.body;
+        const [attempts] = await connection.query('SELECT * FROM quiz_attempts WHERE id = ? AND student_id = ?', [req.params.attemptId, req.user.id]);
+        if (attempts.length === 0) {
+            connection.release();
+            return res.status(404).json({ error: 'Attempt not found' });
+        }
+
+        const attempt = attempts[0];
+        const quiz = await getQuizWithQuestions(attempt.quiz_id);
+        let score = 0;
+
+        await connection.beginTransaction();
+        for (const question of quiz.questions) {
+            const selectedAnswer = answers[question.id];
+            const option = question.optionRecords.find((record) => record.text === selectedAnswer);
+            const isCorrect = selectedAnswer === question.correctAnswer;
+            if (isCorrect) score += 1;
+
+            await connection.query(`
+                INSERT INTO quiz_attempt_answers (attempt_id, question_id, selected_option_id, selected_answer, is_correct)
+                VALUES (?, ?, ?, ?, ?)
+            `, [attempt.id, question.id, option?.id || null, selectedAnswer || null, isCorrect]);
+        }
+
+        const percentage = quiz.questions.length ? Number(((score / quiz.questions.length) * 100).toFixed(2)) : 0;
+        await connection.query(`
+            UPDATE quiz_attempts
+            SET score = ?, total_questions = ?, percentage = ?, status = 'submitted', submitted_at = CURRENT_TIMESTAMP, violations = ?
+            WHERE id = ?
+        `, [score, quiz.questions.length, percentage, JSON.stringify(violations), attempt.id]);
+
+        await connection.commit();
+        await logActivity({ actorId: req.user.id, targetUserId: req.user.id, courseId: quiz.courseId, entityType: 'quiz_attempt', entityId: attempt.id, action: 'submitted_quiz', metadata: { percentage } });
+        res.json({ score, totalQuestions: quiz.questions.length, percentage });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Submit attempt error:', error);
+        res.status(500).json({ error: 'Failed to submit quiz attempt' });
+    } finally {
+        connection.release();
+    }
+});
+
+router.get('/:id/results', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const [attempts] = await db.query(`
+            SELECT qa.*, u.username AS studentName, u.email AS studentEmail
+            FROM quiz_attempts qa
+            JOIN quizzes q ON q.id = qa.quiz_id
+            JOIN users u ON u.id = qa.student_id
+            WHERE qa.quiz_id = ? AND q.teacher_id = ? AND qa.status = 'submitted'
+            ORDER BY qa.submitted_at DESC
+        `, [req.params.id, req.user.id]);
+
+        res.json(attempts);
+    } catch (error) {
+        console.error('Quiz results error:', error);
+        res.status(500).json({ error: 'Failed to load quiz results' });
     }
 });
 

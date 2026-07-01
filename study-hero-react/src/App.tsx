@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import './styles/App.css';
+import { clearAuthToken, getAuthRole, getAuthToken, isTokenExpired } from './services/api';
 
 // Pages
 import HomePage from './pages/HomePage';
@@ -15,10 +16,11 @@ import QuizPage from './pages/QuizPage';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) => {
-  const token = localStorage.getItem('authToken');
-  const userRole = localStorage.getItem('userRole');
+  const token = getAuthToken();
+  const userRole = getAuthRole();
 
-  if (!token) {
+  if (!token || isTokenExpired()) {
+    clearAuthToken();
     return <Navigate to="/login" replace />;
   }
 
@@ -111,4 +113,4 @@ declare global {
   }
 }
 
-export default App; 
+export default App;

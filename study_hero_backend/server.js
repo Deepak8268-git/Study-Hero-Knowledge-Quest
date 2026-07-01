@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
+const ensureCommercialSchema = require('./src/config/ensureCommercialSchema');
+
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -38,7 +40,9 @@ const userRoutes = require('./src/routes/userRoutes');
 const courseRoutes = require('./src/routes/courseRoutes');
 const assignmentRoutes = require('./src/routes/assignmentRoutes');
 const quizRoutes = require('./src/routes/quizRoutes');
+const dashboardRoutes = require('./src/routes/dashboardRoutes');
 app.use('/api/quiz', quizRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 const authRoutes = require('./src/routes/authRoutes');
 app.use('/api/auth', authRoutes);
@@ -68,14 +72,30 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log('Available routes:');
-    console.log('- POST /api/users/register');
-    console.log('- POST /api/users/login');
-    console.log('- GET /api/courses');
-    console.log('- POST /api/courses');
-    console.log('- GET /api/assignments/course/:courseId');
-    console.log('- POST /api/assignments');
-});
+
+async function startServer() {
+    try {
+        await ensureCommercialSchema();
+
+        app.listen(PORT, () => {
+            console.log(`Server running on port ${PORT}`);
+            console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+            console.log('Available routes:');
+            console.log('- POST /api/users/register');
+            console.log('- POST /api/users/login');
+            console.log('- GET /api/courses');
+            console.log('- POST /api/courses');
+            console.log('- GET /api/assignments/course/:courseId');
+            console.log('- POST /api/assignments');
+            console.log('- GET /api/dashboard/teacher');
+            console.log('- GET /api/dashboard/student');
+            console.log('- GET /api/quiz/:id');
+            console.log('- POST /api/quiz/:id/attempts');
+        });
+    } catch (error) {
+        console.error('Failed to start server:', error);
+        process.exit(1);
+    }
+}
+
+startServer();

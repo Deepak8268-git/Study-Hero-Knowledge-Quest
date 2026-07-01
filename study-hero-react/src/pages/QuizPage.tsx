@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
-import WebcamProctoring from '../components/WebcamProctoring';
+import { apiRequest, getAuthToken } from '../services/api';
 
 interface QuizQuestion {
   id: number;
@@ -17,8 +17,8 @@ interface QuizSettings {
   randomizeQuestions: boolean;
   showOneQuestionAtATime: boolean;
   requireWebcam: boolean;
-  duration: number; // in minutes
-  passingScore: number; // percentage needed to pass
+  duration: number;
+  passingScore: number;
 }
 
 interface Quiz {
@@ -28,14 +28,27 @@ interface Quiz {
   questions: QuizQuestion[];
   settings: QuizSettings;
   source?: string;
+  code?: string;
 }
 
-// Add the missing utility functions
-/**
- * Shuffles an array randomly
- * @param array The array to shuffle
- * @returns A new shuffled array
- */
+interface QuizResponse {
+  id: string;
+  title: string;
+  description?: string;
+  code?: string;
+  questions: Array<{
+    id: number;
+    question: string;
+    options: string[];
+    correctAnswer: string;
+    explanation?: string;
+  }>;
+  settings?: Partial<QuizSettings> & { timeLimit?: number; passingScore?: number };
+  duration?: number;
+  passingScore?: number;
+  source?: string;
+}
+
 const shuffleArray = <T,>(array: T[]): T[] => {
   const newArray = [...array];
   for (let i = newArray.length - 1; i > 0; i--) {
@@ -45,67 +58,37 @@ const shuffleArray = <T,>(array: T[]): T[] => {
   return newArray;
 };
 
-/**
- * Gets a sample quiz for demonstration purposes
- * @param quizId The ID of the quiz to generate
- * @returns A sample quiz object
- */
-const getSampleQuiz = (quizId: string | undefined): Quiz => {
+const normalizeQuiz = (quiz: QuizResponse): Quiz => {
+  const settings = quiz.settings || {};
   return {
-    id: quizId || 'sample-quiz',
-    title: 'Sample Quiz',
-    description: 'This is a sample quiz for demonstration purposes.',
-    questions: [
-      {
-        id: 1,
-        question: 'What is the capital of France?',
-        options: ['London', 'Berlin', 'Paris', 'Madrid'],
-        correctAnswer: 'Paris'
-      },
-      {
-        id: 2,
-        question: 'What is 2 + 2?',
-        options: ['3', '4', '5', '6'],
-        correctAnswer: '4'
-      },
-      {
-        id: 3,
-        question: 'Who painted the Mona Lisa?',
-        options: ['Van Gogh', 'Da Vinci', 'Picasso', 'Monet'],
-        correctAnswer: 'Da Vinci'
-      },
-      {
-        id: 4,
-        question: 'Which planet is closest to the sun?',
-        options: ['Earth', 'Mars', 'Venus', 'Mercury'],
-        correctAnswer: 'Mercury'
-      },
-      {
-        id: 5,
-        question: 'What is the largest mammal?',
-        options: ['Elephant', 'Blue Whale', 'Giraffe', 'Hippopotamus'],
-        correctAnswer: 'Blue Whale'
-      }
-    ],
+    id: String(quiz.id),
+    title: quiz.title,
+    description: quiz.description || '',
+    code: quiz.code,
+    questions: quiz.questions.map((question) => ({
+      id: question.id,
+      question: question.question,
+      options: question.options,
+      correctAnswer: question.correctAnswer,
+      explanation: question.explanation
+    })),
     settings: {
-      preventTabSwitch: true,
-      randomizeQuestions: true,
-      showOneQuestionAtATime: true,
-      requireWebcam: false,
-      duration: 5, // 5 minutes
-      passingScore: 60
+      duration: Number(settings.duration || settings.timeLimit || quiz.duration || 20),
+      preventTabSwitch: settings.preventTabSwitch !== false,
+      randomizeQuestions: settings.randomizeQuestions !== false,
+      showOneQuestionAtATime: settings.showOneQuestionAtATime !== false,
+      requireWebcam: !!settings.requireWebcam,
+      passingScore: Number(settings.passingScore || quiz.passingScore || 60)
     },
-    source: 'sample'
+    source: quiz.source || 'manual'
   };
 };
 
 const QuizPage: React.FC = () => {
   const { quizId } = useParams<{ quizId: string }>();
   const navigate = useNavigate();
-  const location = useLocation();
   const webcamRef = useRef<HTMLVideoElement>(null);
   
-  // Define states with proper types
   const [loading, setLoading] = useState<boolean>(true);
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [quizStarted, setQuizStarted] = useState<boolean>(false);
@@ -126,7 +109,7 @@ const QuizPage: React.FC = () => {
     randomizeQuestions: true,
     showOneQuestionAtATime: true,
     requireWebcam: false,
-    duration: 5, // 5 minutes
+    duration: 5,
     passingScore: 60
   });
   const [showViolationWarning, setShowViolationWarning] = useState(false);
@@ -134,89 +117,61 @@ const QuizPage: React.FC = () => {
   const [invalidAccess, setInvalidAccess] = useState(false);
   const [quizTitle, setQuizTitle] = useState<string>('');
   const [quizDescription, setQuizDescription] = useState<string>('');
-  const userRole = localStorage.getItem('userRole');
+  const [attemptId, setAttemptId] = useState<number | null>(null);
+  const [submittingQuiz, setSubmittingQuiz] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    // Check if the user is logged in
-    const user = localStorage.getItem('authToken');
-    if (!user) {
+    const token = getAuthToken();
+    if (!token) {
       navigate('/login');
       return;
     }
-    
-    setLoading(true);
-    
-    // Attempt to find the quiz in localStorage first
-    const generatedQuizzes = JSON.parse(localStorage.getItem('generatedQuizzes') || '[]');
-    const foundQuiz = generatedQuizzes.find((q: any) => q.id === quizId);
-    
-    // Also check student scheduled quizzes
-    const studentQuizzes = JSON.parse(localStorage.getItem('studentScheduledQuizzes') || '[]');
-    const foundStudentQuiz = studentQuizzes.find((q: any) => q.id === quizId);
-    
-    if (foundQuiz || foundStudentQuiz) {
-      const quiz = foundQuiz || foundStudentQuiz;
-      setTimeout(() => {
-        // Set up the quiz with settings
-        const quizData: Quiz = {
-          id: quiz.id,
-          title: quiz.title,
-          description: quiz.description || '',
-          questions: quiz.questions.map((q: any) => ({
-            id: q.id,
-            question: q.question,
-            options: q.options,
-            correctAnswer: q.correctAnswer
-          })),
-          settings: {
-            duration: Number(quiz.settings?.timeLimit || quiz.duration || 20),
-            preventTabSwitch: !!quiz.settings?.preventTabSwitch || false,
-            randomizeQuestions: !!quiz.settings?.randomizeQuestions || false,
-            showOneQuestionAtATime: !!quiz.settings?.showOneQuestionAtATime || false,
-            requireWebcam: !!quiz.settings?.requireWebcam || false,
-            passingScore: quiz.settings?.passingScore || 60
-          },
-          source: quiz.source || 'manual'
-        };
-        
-        setQuiz(quizData);
-        
-        // Initialize questions
-        let questionsToUse = [...quizData.questions];
-        if (quizData.settings.randomizeQuestions) {
-          questionsToUse = shuffleArray([...questionsToUse]);
-        }
-        
-        setQuestions(questionsToUse);
-        setCurrentQuestion(questionsToUse[0] || null);
-        setSelectedAnswers({});
-        setLoading(false);
-        setQuizStarted(false);
-      }, 1500);
-    } else {
-      // For demo purposes, load a sample quiz if not found
-      setTimeout(() => {
-        const sampleQuiz = getSampleQuiz(quizId);
-        setQuiz(sampleQuiz);
-        
-        // Initialize questions
-        let questionsToUse = [...sampleQuiz.questions];
-        if (sampleQuiz.settings.randomizeQuestions) {
-          questionsToUse = shuffleArray([...questionsToUse]);
-        }
-        
-        setQuestions(questionsToUse);
-        setCurrentQuestion(questionsToUse[0] || null);
-        setSelectedAnswers({});
-        setLoading(false);
-        setQuizStarted(false);
-      }, 1500);
+
+    if (!quizId) {
+      setInvalidAccess(true);
+      setLoading(false);
+      return;
     }
+    
+    const loadQuiz = async () => {
+      try {
+        setLoading(true);
+        const response = await apiRequest<QuizResponse>(`/api/quiz/${quizId}`);
+        const quizData = normalizeQuiz(response);
+        let questionsToUse = [...quizData.questions];
+
+        if (quizData.settings.randomizeQuestions) {
+          questionsToUse = shuffleArray(questionsToUse);
+        }
+
+        setQuiz(quizData);
+        setQuizSettings(quizData.settings);
+        setQuestions(questionsToUse);
+        setCurrentQuestion(questionsToUse[0] || null);
+        setSelectedAnswers({});
+        setQuizStarted(false);
+        setQuizCompleted(false);
+        setShowScore(false);
+        setQuizCode(quizData.code || null);
+        setQuizTitle(quizData.title);
+        setQuizDescription(quizData.description);
+        setInvalidAccess(false);
+        setLoadError('');
+      } catch (error: any) {
+        console.error('Quiz load error:', error);
+        setLoadError(error.message || 'Unable to load quiz.');
+        setInvalidAccess(true);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadQuiz();
   }, [quizId, navigate]);
   
-  // Add tab visibility change detection
   useEffect(() => {
-    if (quizSettings.preventTabSwitch && !loading && !showScore) {
+    if (quizSettings.preventTabSwitch && quizStarted && !loading && !showScore) {
       const handleVisibilityChange = () => {
         if (document.visibilityState === 'hidden') {
           handleViolation('tab_switch');
@@ -229,31 +184,28 @@ const QuizPage: React.FC = () => {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       };
     }
-  }, [loading, showScore, quizSettings.preventTabSwitch]);
+  }, [quizStarted, loading, showScore, quizSettings.preventTabSwitch]);
   
-  // Timer effect
   useEffect(() => {
-    if (!loading && !showScore && timeLeft > 0) {
-      const timerId = setTimeout(() => {
+    if (quizStarted && !loading && !showScore && timeLeft > 0) {
+      const timerId = window.setTimeout(() => {
         setTimeLeft(timeLeft - 1);
       }, 1000);
       
-      return () => clearTimeout(timerId);
-    } else if (timeLeft === 0 && !showScore) {
+      return () => window.clearTimeout(timerId);
+    } else if (quizStarted && timeLeft === 0 && !showScore) {
       handleSubmitQuiz();
     }
-  }, [timeLeft, loading, showScore]);
+  }, [timeLeft, quizStarted, loading, showScore]);
   
   const handleViolation = (type: string) => {
     setViolations(prev => [...prev, type]);
     setShowViolationWarning(true);
     
-    // Hide the warning after 5 seconds
-    setTimeout(() => {
+    window.setTimeout(() => {
       setShowViolationWarning(false);
     }, 5000);
     
-    // In a real app, we would also log this to the server
     console.warn(`Violation detected: ${type}`);
   };
   
@@ -263,74 +215,78 @@ const QuizPage: React.FC = () => {
   };
   
   const handleNextQuestion = () => {
-    // Record the answer
-    setSelectedAnswers({
+    if (!currentQuestion) return;
+
+    const updatedAnswers = {
       ...selectedAnswers,
-      [questions[currentQuestionIndex].id]: selectedAnswer
-    });
-    
-    // Check if the answer is correct
-    if (selectedAnswer === questions[currentQuestionIndex].correctAnswer) {
-      setScore(score + 1);
-    }
-    
-    // Clear selection
+      [currentQuestion.id]: selectedAnswer
+    };
+    setSelectedAnswers(updatedAnswers);
     setSelectedAnswer('');
     setShowExplanation(false);
     
-    // Move to next question or end quiz
     const nextQuestionIndex = currentQuestionIndex + 1;
     if (nextQuestionIndex < questions.length) {
       setCurrentQuestionIndex(nextQuestionIndex);
       setCurrentQuestion(questions[nextQuestionIndex]);
     } else {
-      handleSubmitQuiz();
+      handleSubmitQuiz(updatedAnswers);
     }
   };
   
-  const handleSubmitQuiz = () => {
-    // Calculate final score if we're on the last question
-    if (!showScore && currentQuestionIndex === questions.length - 1 && selectedAnswer) {
-      if (selectedAnswer === questions[currentQuestionIndex].correctAnswer) {
-        setScore(score + 1);
-      }
-      setSelectedAnswers({
-        ...selectedAnswers,
-        [questions[currentQuestionIndex].id]: selectedAnswer
+  const handleSubmitQuiz = async (answersOverride?: Record<number, string>) => {
+    if (submittingQuiz || showScore || !quiz || !attemptId) return;
+
+    const finalAnswers = answersOverride || (
+      currentQuestion && selectedAnswer
+        ? { ...selectedAnswers, [currentQuestion.id]: selectedAnswer }
+        : selectedAnswers
+    );
+
+    try {
+      setSubmittingQuiz(true);
+      const result = await apiRequest<{ score: number; totalQuestions: number; percentage: number }>(`/api/quiz/attempts/${attemptId}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({ answers: finalAnswers, violations })
       });
+
+      setSelectedAnswers(finalAnswers);
+      setScore(result.score);
+      setShowScore(true);
+      setQuizCompleted(true);
+    } catch (error: any) {
+      console.error('Quiz submit error:', error);
+      setLoadError(error.message || 'Unable to submit quiz.');
+    } finally {
+      setSubmittingQuiz(false);
     }
-    
-    // Save violations to be shown in the results
-    // In a real app, we would also submit these to the server
-    
-    setShowScore(true);
-    setQuizCompleted(true);
-  };
-  
-  // Format time remaining
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
   
   const handleWebcamToggle = () => {
     setWebcamReady(!webcamReady);
   };
   
-  const handleStartQuiz = () => {
+  const handleStartQuiz = async () => {
     if (!quiz) return;
-    
-    setQuizStarted(true);
-    setQuizCompleted(false);
-    setTimeLeft(quiz.settings.duration * 60 || 300);
-    setScore(0);
-    setSelectedAnswers({});
-    setSelectedAnswer('');
-    setCurrentQuestionIndex(0);
-    setCurrentQuestion(questions[0] || null);
-    setShowExplanation(false);
-    setViolations([]);
+
+    try {
+      const result = await apiRequest<{ attemptId: number }>(`/api/quiz/${quiz.id}/attempts`, { method: 'POST' });
+      setAttemptId(result.attemptId);
+      setQuizStarted(true);
+      setQuizCompleted(false);
+      setTimeLeft(quiz.settings.duration * 60 || 300);
+      setScore(0);
+      setSelectedAnswers({});
+      setSelectedAnswer('');
+      setCurrentQuestionIndex(0);
+      setCurrentQuestion(questions[0] || null);
+      setShowExplanation(false);
+      setViolations([]);
+      setLoadError('');
+    } catch (error: any) {
+      console.error('Quiz attempt start error:', error);
+      setLoadError(error.message || 'Unable to start quiz attempt.');
+    }
   };
   
   if (loading) {
@@ -365,7 +321,7 @@ const QuizPage: React.FC = () => {
               </div>
               <h2 className="text-2xl font-bold text-gray-800 mb-2">Access Denied</h2>
               <p className="text-gray-600">
-                This quiz requires a valid access code. Please obtain the correct code from your teacher.
+                {loadError || 'This quiz requires a valid access code. Please obtain the correct code from your teacher.'}
               </p>
             </div>
             
@@ -390,13 +346,13 @@ const QuizPage: React.FC = () => {
       <Header />
       
       <main className="flex-grow py-8 px-4">
-        {loading ? (
-          <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-md p-8 flex flex-col items-center justify-center">
-            <div className="animate-spin h-12 w-12 border-4 border-primary border-t-transparent rounded-full mb-4"></div>
-            <h2 className="text-xl font-bold text-gray-800">Loading Quiz...</h2>
-            <p className="text-gray-600 mt-2">Please wait while we prepare your quiz</p>
+        {loadError && (
+          <div className="max-w-4xl mx-auto bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-4 rounded">
+            {loadError}
           </div>
-        ) : !quizStarted ? (
+        )}
+
+        {!quizStarted ? (
           <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-md p-8">
             <h1 className="text-2xl font-bold text-gray-800 mb-4">{quiz?.title}</h1>
             <p className="text-gray-600 mb-6">{quiz?.description}</p>
@@ -485,19 +441,18 @@ const QuizPage: React.FC = () => {
             <div className="flex justify-center mt-8">
               <button
                 onClick={handleStartQuiz}
-                disabled={quiz?.settings.requireWebcam && !webcamReady}
+                disabled={(quiz?.settings.requireWebcam && !webcamReady) || submittingQuiz}
                 className={`px-6 py-3 text-lg font-medium rounded-lg ${
-                  quiz?.settings.requireWebcam && !webcamReady 
+                  (quiz?.settings.requireWebcam && !webcamReady) || submittingQuiz
                     ? 'bg-gray-300 cursor-not-allowed text-gray-500' 
                     : 'bg-primary text-white hover:bg-primary/90'
                 } transition-colors`}
               >
-                Start Quiz
+                {submittingQuiz ? 'Starting...' : 'Start Quiz'}
               </button>
             </div>
           </div>
         ) : quizCompleted ? (
-          // Quiz Results
           <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-md p-8">
             <div className="text-center mb-8">
               <div className="inline-flex items-center justify-center h-24 w-24 rounded-full bg-green-100 text-green-600 text-4xl mb-4">
@@ -513,27 +468,27 @@ const QuizPage: React.FC = () => {
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-medium text-gray-800">Your Score</h2>
                 <span className="text-2xl font-bold text-primary">
-                  {score}/{questions.length} ({Math.round((score / questions.length) * 100)}%)
+                  {score}/{questions.length} ({Math.round((score / Math.max(questions.length, 1)) * 100)}%)
                 </span>
               </div>
               
               <div className="w-full bg-gray-200 rounded-full h-4 mb-2">
                 <div 
                   className={`h-4 rounded-full ${
-                    (score / questions.length) >= (quiz?.settings.passingScore || 60) / 100 
+                    (score / Math.max(questions.length, 1)) >= (quiz?.settings.passingScore || 60) / 100 
                       ? 'bg-green-500' 
                       : 'bg-red-500'
                   }`}
-                  style={{ width: `${(score / questions.length) * 100}%` }}
+                  style={{ width: `${(score / Math.max(questions.length, 1)) * 100}%` }}
                 ></div>
               </div>
               
               <p className={`text-right font-medium ${
-                (score / questions.length) >= (quiz?.settings.passingScore || 60) / 100 
+                (score / Math.max(questions.length, 1)) >= (quiz?.settings.passingScore || 60) / 100 
                   ? 'text-green-600' 
                   : 'text-red-600'
               }`}>
-                {(score / questions.length) >= (quiz?.settings.passingScore || 60) / 100 
+                {(score / Math.max(questions.length, 1)) >= (quiz?.settings.passingScore || 60) / 100 
                   ? 'Passed!' 
                   : 'Failed'}
               </p>
@@ -620,8 +575,13 @@ const QuizPage: React.FC = () => {
             </div>
           </div>
         ) : (
-          // Quiz Questions
           <div className="bg-white rounded-xl shadow-md p-6">
+            {showViolationWarning && (
+              <div className="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded">
+                Quiz rule violation recorded.
+              </div>
+            )}
+
             {/* Quiz Code Indicator */}
             {quizCode && (
               <div className="flex justify-end mb-4">
@@ -657,7 +617,7 @@ const QuizPage: React.FC = () => {
               <div className="w-full bg-gray-200 rounded-full h-2.5">
                 <div 
                   className="bg-primary rounded-full h-2.5 transition-all duration-300" 
-                  style={{ width: `${((currentQuestionIndex) / questions.length) * 100}%` }}
+                  style={{ width: `${((currentQuestionIndex) / Math.max(questions.length, 1)) * 100}%` }}
                 ></div>
               </div>
             </div>
@@ -708,7 +668,7 @@ const QuizPage: React.FC = () => {
                 {showExplanation && (
                   <div className="mt-2 p-3 bg-blue-50 rounded-md text-sm text-blue-800">
                     <p className="font-medium mb-1">Hint:</p>
-                    <p>Think about the fundamental properties of this data structure/algorithm and its common applications.</p>
+                    <p>{currentQuestion?.explanation || 'Think about the fundamental properties and common applications related to this question.'}</p>
                   </div>
                 )}
               </div>
@@ -720,6 +680,7 @@ const QuizPage: React.FC = () => {
                 onClick={() => {
                   if (currentQuestionIndex > 0) {
                     setCurrentQuestionIndex(currentQuestionIndex - 1);
+                    setCurrentQuestion(questions[currentQuestionIndex - 1]);
                     setSelectedAnswer(selectedAnswers[questions[currentQuestionIndex - 1].id] || '');
                     setShowExplanation(false);
                   }
@@ -737,14 +698,14 @@ const QuizPage: React.FC = () => {
               
               <button
                 onClick={handleNextQuestion}
-                disabled={!selectedAnswer}
+                disabled={!selectedAnswer || submittingQuiz}
                 className={`px-6 py-2 rounded-md ${
-                  !selectedAnswer
+                  !selectedAnswer || submittingQuiz
                     ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
                     : 'bg-primary text-white hover:bg-primary/90'
                 }`}
               >
-                {currentQuestionIndex < questions.length - 1 ? 'Next' : 'Finish Quiz'}
+                {submittingQuiz ? 'Submitting...' : currentQuestionIndex < questions.length - 1 ? 'Next' : 'Finish Quiz'}
               </button>
             </div>
           </div>
@@ -756,4 +717,4 @@ const QuizPage: React.FC = () => {
   );
 };
 
-export default QuizPage; 
+export default QuizPage;

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
+import { apiRequest, getAuthToken } from '../services/api';
 
 interface Course {
   id: number;
@@ -27,16 +28,44 @@ interface ScheduledQuiz {
   dueDate?: string;
   duration?: number;
   quizCode: string;
-  questions?: {
-    id: number;
-    question: string;
-    options: string[];
-    correctAnswer: string;
-  }[];
   courseId?: string;
   courseName?: string;
   source?: string;
 }
+
+interface StudentDashboardResponse {
+  courses: Array<{ id: number; title: string; instructor: string; progress: number }>;
+  assignments: Array<{ id: number; title: string; course: string; dueDate: string; completed: boolean | number }>;
+  scheduledQuizzes: Array<{
+    id: number | string;
+    title: string;
+    description?: string;
+    scheduledDate?: string;
+    duration?: number;
+    quizCode?: string;
+    courseId?: number | string;
+    courseName?: string;
+    source?: string;
+  }>;
+}
+
+interface QuizLookupResponse {
+  id: string;
+  title: string;
+  description?: string;
+  scheduledDate?: string;
+  duration?: number;
+  code?: string;
+  courseId?: number | string;
+  courseName?: string;
+  source?: string;
+}
+
+const courseImages = [
+  'https://public.readdy.ai/ai/img_res/c2b6a1c2a0a2f01b3cebf7bc4b28df92.jpg',
+  'https://public.readdy.ai/ai/img_res/1e8954d5adaed647d599a83d143e7fe8.jpg',
+  'https://public.readdy.ai/ai/img_res/82c3d797823dc44d0fcf84c4b9a1c8da.jpg'
+];
 
 // Define the QuizCard component before the StudentDashboardPage component
 const QuizCard: React.FC<{ quiz: ScheduledQuiz }> = ({ quiz }) => {
@@ -89,205 +118,105 @@ const QuizCard: React.FC<{ quiz: ScheduledQuiz }> = ({ quiz }) => {
 const StudentDashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState('');
   const [courses, setCourses] = useState<Course[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [scheduledQuizzes, setScheduledQuizzes] = useState<ScheduledQuiz[]>([]);
   const [quizCode, setQuizCode] = useState('');
-  const [codeError, setCodeError] = useState<string | null>(null);
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [quizCodeSuccess, setQuizCodeSuccess] = useState('');
   const [quizCodeError, setQuizCodeError] = useState('');
+  const [submittingCode, setSubmittingCode] = useState(false);
   
+  const mapQuiz = (quiz: StudentDashboardResponse['scheduledQuizzes'][number] | QuizLookupResponse): ScheduledQuiz => {
+    const code = 'quizCode' in quiz && quiz.quizCode
+      ? quiz.quizCode
+      : 'code' in quiz && quiz.code
+        ? quiz.code
+        : '';
+
+    return {
+      id: String(quiz.id),
+      title: quiz.title,
+      description: quiz.description || '',
+      scheduledDate: quiz.scheduledDate,
+      duration: quiz.duration,
+      quizCode: code,
+      courseId: quiz.courseId ? String(quiz.courseId) : undefined,
+      courseName: quiz.courseName,
+      source: quiz.source || 'manual'
+    };
+  };
+
+  const loadDashboard = async () => {
+    try {
+      setLoading(true);
+      const data = await apiRequest<StudentDashboardResponse>('/api/dashboard/student');
+
+      setCourses(data.courses.map((course, index) => ({
+        id: course.id,
+        title: course.title,
+        instructor: course.instructor,
+        progress: Number(course.progress || 0),
+        imageUrl: courseImages[index % courseImages.length]
+      })));
+
+      setAssignments(data.assignments.map((assignment) => ({
+        id: assignment.id,
+        title: assignment.title,
+        course: assignment.course,
+        dueDate: assignment.dueDate,
+        completed: Boolean(assignment.completed)
+      })));
+
+      setScheduledQuizzes(data.scheduledQuizzes.map(mapQuiz));
+      setDashboardError('');
+    } catch (error: any) {
+      console.error('Student dashboard load error:', error);
+      setDashboardError(error.message || 'Unable to load dashboard data.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    // Check if user is authenticated
-    const token = localStorage.getItem('authToken');
+    const token = getAuthToken();
     if (!token) {
       navigate('/login');
       return;
     }
-    
-    // Simulate API call to get dashboard data
-    setTimeout(() => {
-      setCourses([
-        {
-          id: 1,
-          title: 'Introduction to Computer Science',
-          instructor: 'Dr. Smith',
-          progress: 65,
-          imageUrl: 'https://public.readdy.ai/ai/img_res/c2b6a1c2a0a2f01b3cebf7bc4b28df92.jpg'
-        },
-        {
-          id: 2,
-          title: 'Advanced Mathematics',
-          instructor: 'Prof. Johnson',
-          progress: 42,
-          imageUrl: 'https://public.readdy.ai/ai/img_res/1e8954d5adaed647d599a83d143e7fe8.jpg'
-        },
-        {
-          id: 3,
-          title: 'Biology 101',
-          instructor: 'Dr. Williams',
-          progress: 78,
-          imageUrl: 'https://public.readdy.ai/ai/img_res/82c3d797823dc44d0fcf84c4b9a1c8da.jpg'
-        }
-      ]);
-      
-      setAssignments([
-        {
-          id: 1,
-          title: 'Algorithm Analysis Report',
-          course: 'Computer Science',
-          dueDate: '2023-06-15',
-          completed: false
-        },
-        {
-          id: 2,
-          title: 'Calculus Problem Set',
-          course: 'Mathematics',
-          dueDate: '2023-06-12',
-          completed: true
-        },
-        {
-          id: 3,
-          title: 'Lab Report: Cell Division',
-          course: 'Biology',
-          dueDate: '2023-06-10',
-          completed: false
-        }
-      ]);
-      
-      // Scheduled quizzes
-      setScheduledQuizzes([
-        {
-          id: 'q1',
-          title: 'Midterm Review: Data Structures',
-          description: 'Comprehensive review of data structures concepts',
-          courseName: 'Computer Science',
-          scheduledDate: '2023-06-20',
-          duration: 30,
-          quizCode: 'DS5432',
-          questions: Array(10).fill({
-            id: 1,
-            question: 'Sample question',
-            options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
-            correctAnswer: 'Option 1'
-          }),
-          source: 'manual'
-        },
-        {
-          id: 'q2',
-          title: 'Weekly Quiz: Calculus Fundamentals',
-          description: 'Review of basic calculus concepts',
-          courseName: 'Mathematics',
-          scheduledDate: '2023-06-08',
-          duration: 15,
-          quizCode: 'MA3276',
-          questions: Array(5).fill({
-            id: 1,
-            question: 'Sample question',
-            options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
-            correctAnswer: 'Option 1'
-          }),
-          source: 'manual'
-        }
-      ]);
-      
-      setLoading(false);
-    }, 1500);
+
+    loadDashboard();
   }, [navigate]);
   
-  const handleSubmitQuizCode = (e: React.FormEvent) => {
+  const handleSubmitQuizCode = async (e: React.FormEvent) => {
     e.preventDefault();
+    const normalizedCode = quizCode.trim().toUpperCase();
     
-    if (!quizCode.trim()) {
+    if (!normalizedCode) {
       setQuizCodeError('Please enter a quiz code');
       return;
     }
-    
-    // Check if the quiz code exists in localStorage
-    const storedCodes = JSON.parse(localStorage.getItem('quizCodes') || '[]');
-    console.log('Stored codes:', storedCodes);
-    console.log('Current code:', quizCode.trim().toUpperCase());
-    
-    if (storedCodes.includes(quizCode.trim().toUpperCase())) {
-      // Find the quiz with this code in generatedQuizzes
-      const generatedQuizzes = JSON.parse(localStorage.getItem('generatedQuizzes') || '[]');
-      const foundQuiz = generatedQuizzes.find((q: any) => q.code === quizCode.trim().toUpperCase());
-      console.log('Found quiz:', foundQuiz);
-      
-      if (foundQuiz) {
-        // Add this quiz to the student's scheduled quizzes
-        const now = new Date();
-        const newScheduledQuiz: ScheduledQuiz = {
-          id: foundQuiz.id,
-          title: foundQuiz.title,
-          description: foundQuiz.description,
-          scheduledDate: now.toISOString(),
-          duration: foundQuiz.settings?.timeLimit || 20,
-          quizCode: foundQuiz.code,
-          questions: foundQuiz.questions,
-          source: foundQuiz.source || 'manual'
-        };
-        
-        const updatedQuizzes = [...scheduledQuizzes, newScheduledQuiz];
-        setScheduledQuizzes(updatedQuizzes);
-        
-        // Save to localStorage for persistence
-        const storedQuizzes = JSON.parse(localStorage.getItem('studentScheduledQuizzes') || '[]');
-        localStorage.setItem('studentScheduledQuizzes', JSON.stringify([...storedQuizzes, newScheduledQuiz]));
-        
-        // Clear the form and show success
-        setQuizCode('');
-        setQuizCodeSuccess('Quiz added to your schedule!');
-        setQuizCodeError('');
-        setShowCodeModal(false);
-        
-        // Clear success message after 3 seconds
-        setTimeout(() => {
-          setQuizCodeSuccess('');
-        }, 3000);
-      } else {
-        setQuizCodeError('Unable to find quiz with this code. Please try again.');
-      }
-    } else {
-      // DEMO ONLY: For demo purposes, allow DS5432 to work even if not in localStorage
-      if (quizCode.trim().toUpperCase() === 'DS5432' || quizCode.trim().toUpperCase().startsWith('DS')) {
-        const demoQuiz: ScheduledQuiz = {
-          id: 'demo-' + new Date().getTime(),
-          title: 'Demo Quiz: Data Structures',
-          description: 'This is a demo quiz for testing purposes.',
-          scheduledDate: new Date().toISOString(),
-          duration: 15,
-          quizCode: quizCode.trim().toUpperCase(),
-          questions: Array(5).fill({
-            id: 1,
-            question: 'Sample question about data structures',
-            options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
-            correctAnswer: 'Option 1'
-          }),
-          source: 'demo'
-        };
-        
-        const updatedQuizzes = [...scheduledQuizzes, demoQuiz];
-        setScheduledQuizzes(updatedQuizzes);
-        
-        // Save to localStorage for persistence
-        const storedQuizzes = JSON.parse(localStorage.getItem('studentScheduledQuizzes') || '[]');
-        localStorage.setItem('studentScheduledQuizzes', JSON.stringify([...storedQuizzes, demoQuiz]));
-        
-        // Clear the form and show success
-        setQuizCode('');
-        setQuizCodeSuccess('Demo quiz added to your schedule!');
-        setQuizCodeError('');
-        setShowCodeModal(false);
-        
-        // Clear success message after 3 seconds
-        setTimeout(() => {
-          setQuizCodeSuccess('');
-        }, 3000);
-      } else {
-        setQuizCodeError('Invalid quiz code. Please check and try again.');
-      }
+
+    try {
+      setSubmittingCode(true);
+      const quiz = await apiRequest<QuizLookupResponse>(`/api/quiz/code/${normalizedCode}`);
+      const mappedQuiz = mapQuiz({ ...quiz, code: quiz.code || normalizedCode });
+
+      setScheduledQuizzes((current) => {
+        const exists = current.some((item) => String(item.id) === String(mappedQuiz.id));
+        return exists ? current : [mappedQuiz, ...current];
+      });
+
+      setQuizCode('');
+      setQuizCodeSuccess('Quiz added to your schedule!');
+      setQuizCodeError('');
+      setShowCodeModal(false);
+      window.setTimeout(() => setQuizCodeSuccess(''), 3000);
+    } catch (error: any) {
+      setQuizCodeError(error.message || 'Invalid quiz code. Please check and try again.');
+    } finally {
+      setSubmittingCode(false);
     }
   };
   
@@ -316,6 +245,12 @@ const StudentDashboardPage: React.FC = () => {
       
       <main className="flex-grow pt-24 pb-12">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          {dashboardError && (
+            <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded">
+              <p className="text-sm text-red-700">{dashboardError}</p>
+            </div>
+          )}
+
           {/* Success Notification */}
           {quizCodeSuccess && (
             <div className="fixed top-24 right-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-md z-50 animate-fadeIn">
@@ -560,7 +495,7 @@ const StudentDashboardPage: React.FC = () => {
                 onClick={() => {
                   setShowCodeModal(false);
                   setQuizCode('');
-                  setCodeError(null);
+                  setQuizCodeError('');
                 }}
                 className="text-gray-400 hover:text-gray-600"
               >
@@ -594,22 +529,18 @@ const StudentDashboardPage: React.FC = () => {
                   type="text"
                   value={quizCode}
                   onChange={(e) => {
-                    // Convert to uppercase, remove any non-alphanumeric characters, and limit to 6 characters
                     const sanitizedInput = e.target.value
                       .toUpperCase()
                       .replace(/[^A-Z0-9]/g, '')
                       .slice(0, 6);
                     setQuizCode(sanitizedInput);
-                    setCodeError(null);
+                    setQuizCodeError('');
                   }}
                   autoFocus
                   placeholder="XXXXXX"
                   className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-center font-mono text-xl tracking-wider uppercase"
                   style={{ letterSpacing: '0.5em' }}
                 />
-                <p className="mt-2 text-xs text-gray-500 text-center">
-                  For demo purposes, try entering <span className="font-mono font-medium bg-gray-100 px-1 py-0.5 rounded">DS5432</span> or any code that starts with DS
-                </p>
               </div>
               
               <div className="flex justify-end">
@@ -618,7 +549,7 @@ const StudentDashboardPage: React.FC = () => {
                   onClick={() => {
                     setShowCodeModal(false);
                     setQuizCode('');
-                    setCodeError(null);
+                    setQuizCodeError('');
                   }}
                   className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 mr-2"
                 >
@@ -626,9 +557,10 @@ const StudentDashboardPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90"
+                  disabled={submittingCode}
+                  className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-70"
                 >
-                  Access Quiz
+                  {submittingCode ? 'Checking...' : 'Access Quiz'}
                 </button>
               </div>
             </form>
@@ -641,4 +573,4 @@ const StudentDashboardPage: React.FC = () => {
   );
 };
 
-export default StudentDashboardPage; 
+export default StudentDashboardPage;
