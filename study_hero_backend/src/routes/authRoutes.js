@@ -5,8 +5,8 @@ const db = require('../config/db');
 const { authMiddleware } = require('../middleware/authMiddleware');
 const validateRequest = require('../middleware/validateRequest');
 const { loginLimiter, passwordResetLimiter, verificationLimiter } = require('../middleware/rateLimiters');
-const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/emailService');
-const { auditLog } = require('../services/auditService');
+const eventBus = require('../events/eventBus');
+const EVENTS = require('../events/eventNames');
 const { validatePasswordStrength } = require('../utils/passwordPolicy');
 const {
     signAccessToken,
@@ -120,8 +120,6 @@ async function createEmailVerification({ user, req }) {
     `, [user.id, tokenHash, expiresAt]);
     await db.query('UPDATE users SET verification_sent_at = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
 
-    await sendVerificationEmail({ to: user.email, username: user.username, token });
-    await auditLog({ userId: user.id, action: 'email_verification_sent', ...getClientInfo(req) });
     return token;
 }
 
@@ -132,7 +130,14 @@ async function markFailedLogin(user, req) {
     const lockedUntil = attempts >= maxAttempts ? addMinutes(lockoutMinutes) : null;
 
     await db.query('UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?', [attempts, lockedUntil, user.id]);
-    await auditLog({ userId: user.id, action: lockedUntil ? 'account_locked' : 'login_failed', ...getClientInfo(req) });
+    eventBus.emitDomain(EVENTS.SECURITY_LOGIN_FAILED, {
+        userId: user.id,
+        actorId: user.id,
+        entityType: 'user',
+        entityId: user.id,
+        auditMetadata: { locked: !!lockedUntil },
+        ...getClientInfo(req)
+    });
 }
 
 function isLocked(user) {
@@ -162,8 +167,16 @@ router.post('/register', validateRequest(registerSchema), async (req, res) => {
 
         const [users] = await db.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
         const user = users[0];
-        await createEmailVerification({ user, req });
-        await auditLog({ userId: user.id, action: 'registered', ...getClientInfo(req) });
+        const verificationToken = await createEmailVerification({ user, req });
+        eventBus.emitDomain(EVENTS.USER_REGISTERED, {
+            userId: user.id,
+            actorId: user.id,
+            user,
+            verificationToken,
+            entityType: 'user',
+            entityId: user.id,
+            ...getClientInfo(req)
+        });
 
         res.status(201).json({
             message: 'User registered successfully. Please verify your email address.',
@@ -198,7 +211,14 @@ router.post('/login', loginLimiter, validateRequest(loginSchema), async (req, re
         await db.query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login_at = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
         const accessToken = signAccessToken(user);
         await createSession({ user, rememberMe, req, res });
-        await auditLog({ userId: user.id, action: 'login_success', ...getClientInfo(req), metadata: { rememberMe } });
+        eventBus.emitDomain(EVENTS.SECURITY_LOGIN, {
+            userId: user.id,
+            actorId: user.id,
+            entityType: 'user',
+            entityId: user.id,
+            auditMetadata: { rememberMe },
+            ...getClientInfo(req)
+        });
 
         res.json({
             token: accessToken,
@@ -246,7 +266,13 @@ router.post('/refresh', async (req, res) => {
 
         const accessToken = signAccessToken(user);
         await createSession({ user, rememberMe: !!session.remember_me, req, res });
-        await auditLog({ userId: user.id, action: 'token_refreshed', ...getClientInfo(req) });
+        eventBus.emitDomain(EVENTS.SECURITY_TOKEN_REFRESHED, {
+            userId: user.id,
+            actorId: user.id,
+            entityType: 'user_session',
+            entityId: session.id,
+            ...getClientInfo(req)
+        });
 
         res.json({ token: accessToken, accessToken, expiresIn: getAccessTokenTtl(), user: publicUser(user) });
     } catch (error) {
@@ -259,7 +285,18 @@ router.post('/logout', async (req, res) => {
     try {
         const refreshToken = req.cookies?.[getRefreshCookieName()] || req.body?.refreshToken;
         if (refreshToken) {
-            await db.query('UPDATE user_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE refresh_token_hash = ?', [hashToken(refreshToken)]);
+            const refreshTokenHash = hashToken(refreshToken);
+            const [sessions] = await db.query('SELECT id, user_id FROM user_sessions WHERE refresh_token_hash = ?', [refreshTokenHash]);
+            await db.query('UPDATE user_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE refresh_token_hash = ?', [refreshTokenHash]);
+            if (sessions.length > 0) {
+                eventBus.emitDomain(EVENTS.SECURITY_LOGOUT, {
+                    userId: sessions[0].user_id,
+                    actorId: sessions[0].user_id,
+                    entityType: 'user_session',
+                    entityId: sessions[0].id,
+                    ...getClientInfo(req)
+                });
+            }
         }
         clearRefreshCookie(res);
         res.json({ message: 'Logged out successfully' });
@@ -272,7 +309,14 @@ router.post('/logout-all', authMiddleware, async (req, res) => {
     try {
         await db.query('UPDATE user_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND revoked_at IS NULL', [req.user.id]);
         clearRefreshCookie(res);
-        await auditLog({ userId: req.user.id, action: 'logout_all', ...getClientInfo(req) });
+        eventBus.emitDomain(EVENTS.SECURITY_LOGOUT, {
+            userId: req.user.id,
+            actorId: req.user.id,
+            entityType: 'user_session',
+            entityId: req.user.id,
+            auditMetadata: { allDevices: true },
+            ...getClientInfo(req)
+        });
         res.json({ message: 'Logged out from all devices' });
     } catch (error) {
         res.status(500).json({ error: 'Server error' });
@@ -298,8 +342,15 @@ router.post('/forgot-password', passwordResetLimiter, validateRequest(emailSchem
                 INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
                 VALUES (?, ?, ?)
             `, [user.id, hashToken(token), addMinutes(Number(process.env.PASSWORD_RESET_EXPIRES_MINUTES || 60))]);
-            await sendPasswordResetEmail({ to: user.email, username: user.username, token });
-            await auditLog({ userId: user.id, action: 'password_reset_requested', ...getClientInfo(req) });
+            eventBus.emitDomain(EVENTS.USER_PASSWORD_RESET_REQUESTED, {
+                userId: user.id,
+                actorId: user.id,
+                user,
+                resetToken: token,
+                entityType: 'user',
+                entityId: user.id,
+                ...getClientInfo(req)
+            });
         }
 
         res.json({ message: 'If an account exists for that email, a reset link has been sent.' });
@@ -333,7 +384,16 @@ router.post('/reset-password', passwordResetLimiter, validateRequest(resetPasswo
         await db.query('UPDATE users SET password = ?, password_changed_at = CURRENT_TIMESTAMP, failed_login_attempts = 0, locked_until = NULL WHERE id = ?', [hashedPassword, record.user_id]);
         await db.query('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [record.id]);
         await db.query('UPDATE user_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ?', [record.user_id]);
-        await auditLog({ userId: record.user_id, action: 'password_reset_completed', ...getClientInfo(req) });
+        const [changedUsers] = await db.query('SELECT id, username, email FROM users WHERE id = ?', [record.user_id]);
+        eventBus.emitDomain(EVENTS.USER_PASSWORD_CHANGED, {
+            userId: record.user_id,
+            actorId: record.user_id,
+            user: changedUsers[0],
+            entityType: 'user',
+            entityId: record.user_id,
+            auditMetadata: { reset: true },
+            ...getClientInfo(req)
+        });
 
         res.json({ message: 'Password reset successfully' });
     } catch (error) {
@@ -360,7 +420,14 @@ router.post('/change-password', authMiddleware, validateRequest(changePasswordSc
         await db.query('UPDATE users SET password = ?, password_changed_at = CURRENT_TIMESTAMP WHERE id = ?', [hashedPassword, req.user.id]);
         await db.query('UPDATE user_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ?', [req.user.id]);
         clearRefreshCookie(res);
-        await auditLog({ userId: req.user.id, action: 'password_changed', ...getClientInfo(req) });
+        eventBus.emitDomain(EVENTS.USER_PASSWORD_CHANGED, {
+            userId: req.user.id,
+            actorId: req.user.id,
+            user: users[0],
+            entityType: 'user',
+            entityId: req.user.id,
+            ...getClientInfo(req)
+        });
 
         res.json({ message: 'Password changed successfully. Please log in again.' });
     } catch (error) {
@@ -386,7 +453,13 @@ router.post('/verify-email', verificationLimiter, validateRequest(tokenBodySchem
         const record = tokens[0];
         await db.query('UPDATE users SET email_verified = true, email_verified_at = CURRENT_TIMESTAMP WHERE id = ?', [record.user_id]);
         await db.query('UPDATE email_verification_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [record.id]);
-        await auditLog({ userId: record.user_id, action: 'email_verified', ...getClientInfo(req) });
+        eventBus.emitDomain(EVENTS.USER_EMAIL_VERIFIED, {
+            userId: record.user_id,
+            actorId: record.user_id,
+            entityType: 'user',
+            entityId: record.user_id,
+            ...getClientInfo(req)
+        });
 
         res.json({ message: 'Email verified successfully' });
     } catch (error) {
@@ -413,7 +486,16 @@ router.post('/resend-verification', verificationLimiter, validateRequest(emailSc
             return res.status(429).json({ error: 'Please wait before requesting another verification email.' });
         }
 
-        await createEmailVerification({ user, req });
+        const verificationToken = await createEmailVerification({ user, req });
+        eventBus.emitDomain(EVENTS.USER_VERIFICATION_REQUESTED, {
+            userId: user.id,
+            actorId: user.id,
+            user,
+            verificationToken,
+            entityType: 'user',
+            entityId: user.id,
+            ...getClientInfo(req)
+        });
         res.json({ message: 'Verification email sent.' });
     } catch (error) {
         console.error('Resend verification error:', error.message);

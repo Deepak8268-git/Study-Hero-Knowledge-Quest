@@ -283,6 +283,48 @@ async function ensureCommercialSchema() {
     `);
 
     await db.query(`
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            organization_id INT NULL,
+            recipient_id INT NOT NULL,
+            actor_id INT NULL,
+            course_id INT NULL,
+            type VARCHAR(100) NOT NULL,
+            title VARCHAR(150) NOT NULL,
+            message TEXT NOT NULL,
+            priority ENUM('LOW', 'NORMAL', 'HIGH', 'CRITICAL') DEFAULT 'NORMAL',
+            reference_type VARCHAR(50),
+            reference_id INT,
+            metadata JSON,
+            read_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+            INDEX idx_notifications_recipient_read_created (recipient_id, read_at, created_at),
+            INDEX idx_notifications_recipient_created (recipient_id, created_at),
+            INDEX idx_notifications_course_created (course_id, created_at),
+            INDEX idx_notifications_reference (reference_type, reference_id),
+            INDEX idx_notifications_type_created (type, created_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS announcements (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            course_id INT NOT NULL,
+            teacher_id INT NOT NULL,
+            title VARCHAR(150) NOT NULL,
+            message TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_announcements_course_created (course_id, created_at)
+        )
+    `);
+    await db.query(`
         CREATE TABLE IF NOT EXISTS activity_events (
             id INT PRIMARY KEY AUTO_INCREMENT,
             actor_id INT,

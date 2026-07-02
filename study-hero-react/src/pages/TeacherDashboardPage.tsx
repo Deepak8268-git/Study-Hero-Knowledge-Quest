@@ -155,6 +155,13 @@ const TeacherDashboardPage: React.FC = () => {
         console.error('Failed to load teacher dashboard:', error);
       })
       .finally(() => setLoading(false));
+
+    const handleDashboardRefresh = () => {
+      loadDashboard().catch((error) => console.error('Failed to refresh teacher dashboard:', error));
+    };
+
+    window.addEventListener('studyhero:dashboard-refresh', handleDashboardRefresh);
+    return () => window.removeEventListener('studyhero:dashboard-refresh', handleDashboardRefresh);
   }, [navigate]);
 
   const handleQuizGenerated = async () => {

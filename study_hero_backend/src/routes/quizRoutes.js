@@ -4,9 +4,18 @@ const multer = require('multer');
 const pdfParse = require('pdf-parse');
 const db = require('../config/db');
 const { authMiddleware, teacherMiddleware } = require('../middleware/authMiddleware');
+const eventBus = require('../events/eventBus');
+const EVENTS = require('../events/eventNames');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+function getClientInfo(req) {
+    return {
+        ipAddress: req.ip || req.connection?.remoteAddress || null,
+        userAgent: req.get('user-agent') || null
+    };
+}
 
 function generateQuizCode() {
     return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -62,12 +71,6 @@ function parseGeneratedQuiz(text) {
     }).filter((question) => question.question && question.options.length >= 2 && question.correctAnswer);
 }
 
-async function logActivity({ actorId, targetUserId = null, courseId = null, entityType, entityId, action, metadata = null }) {
-    await db.query(`
-        INSERT INTO activity_events (actor_id, target_user_id, course_id, entity_type, entity_id, action, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [actorId, targetUserId, courseId, entityType, entityId, action, metadata ? JSON.stringify(metadata) : null]);
-}
 
 async function isStudentEnrolled(studentId, courseId) {
     const [rows] = await db.query(
@@ -334,7 +337,7 @@ router.post('/', authMiddleware, teacherMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Title, course_id, and questions are required' });
         }
 
-        const [courses] = await db.query('SELECT id FROM courses WHERE id = ? AND teacher_id = ?', [course_id, req.user.id]);
+        const [courses] = await db.query('SELECT id, title FROM courses WHERE id = ? AND teacher_id = ?', [course_id, req.user.id]);
         if (courses.length === 0) {
             return res.status(403).json({ error: 'Not authorized for this course' });
         }
@@ -350,7 +353,19 @@ router.post('/', authMiddleware, teacherMiddleware, async (req, res) => {
             source: source || 'manual'
         });
 
-        await logActivity({ actorId: req.user.id, courseId: course_id, entityType: 'quiz', entityId: saved.quizId, action: 'created_quiz', metadata: { title } });
+        eventBus.emitDomain(EVENTS.QUIZ_CREATED, {
+            actorId: req.user.id,
+            courseId: Number(course_id),
+            courseTitle: courses[0].title,
+            quizId: saved.quizId,
+            quizTitle: title,
+            entityType: 'quiz',
+            entityId: saved.quizId,
+            referenceType: 'quiz',
+            referenceId: saved.quizId,
+            activityMetadata: { title },
+            ...getClientInfo(req)
+        });
         res.status(201).json({ message: 'Quiz created successfully', quiz_id: saved.quizId, quizCode: saved.quizCode });
     } catch (error) {
         console.error('Quiz create error:', error);
@@ -374,7 +389,6 @@ router.put('/:id', authMiddleware, teacherMiddleware, async (req, res) => {
             return res.status(404).json({ error: 'Quiz not found' });
         }
 
-        await logActivity({ actorId: req.user.id, entityType: 'quiz', entityId: Number(req.params.id), action: 'updated_quiz' });
         res.json({ message: 'Quiz updated successfully' });
     } catch (error) {
         console.error('Quiz update error:', error);
@@ -389,7 +403,6 @@ router.delete('/:id', authMiddleware, teacherMiddleware, async (req, res) => {
             return res.status(404).json({ error: 'Quiz not found' });
         }
 
-        await logActivity({ actorId: req.user.id, entityType: 'quiz', entityId: Number(req.params.id), action: 'archived_quiz' });
         res.json({ message: 'Quiz archived successfully' });
     } catch (error) {
         console.error('Quiz delete error:', error);
@@ -411,7 +424,30 @@ router.post('/:id/activate', authMiddleware, teacherMiddleware, async (req, res)
             return res.status(404).json({ error: 'Quiz not found' });
         }
 
-        await logActivity({ actorId: req.user.id, entityType: 'quiz', entityId: Number(req.params.id), action: 'activated_quiz', metadata: { quizCode } });
+        const [quizzes] = await db.query(`
+            SELECT q.id, q.title, q.course_id, c.title AS course_title
+            FROM quizzes q
+            JOIN courses c ON c.id = q.course_id
+            WHERE q.id = ? AND q.teacher_id = ?
+        `, [req.params.id, req.user.id]);
+
+        if (quizzes.length > 0) {
+            eventBus.emitDomain(EVENTS.QUIZ_ACTIVATED, {
+                actorId: req.user.id,
+                courseId: quizzes[0].course_id,
+                courseTitle: quizzes[0].course_title,
+                quizId: Number(req.params.id),
+                quizTitle: quizzes[0].title,
+                quizCode,
+                entityType: 'quiz',
+                entityId: Number(req.params.id),
+                referenceType: 'quiz',
+                referenceId: Number(req.params.id),
+                activityMetadata: { quizCode },
+                ...getClientInfo(req)
+            });
+        }
+
         res.json({ message: 'Quiz activated successfully', quizCode });
     } catch (error) {
         console.error('Quiz activate error:', error);
@@ -431,7 +467,7 @@ router.post('/generate', authMiddleware, teacherMiddleware, async (req, res) => 
             return res.status(400).json({ error: 'context and course_id are required' });
         }
 
-        const [courses] = await db.query('SELECT id FROM courses WHERE id = ? AND teacher_id = ?', [course_id, req.user.id]);
+        const [courses] = await db.query('SELECT id, title FROM courses WHERE id = ? AND teacher_id = ?', [course_id, req.user.id]);
         if (courses.length === 0) {
             return res.status(403).json({ error: 'Not authorized for this course' });
         }
@@ -467,7 +503,19 @@ router.post('/generate', authMiddleware, teacherMiddleware, async (req, res) => 
             quizText
         });
 
-        await logActivity({ actorId: req.user.id, courseId: course_id, entityType: 'quiz', entityId: saved.quizId, action: 'generated_quiz' });
+        eventBus.emitDomain(EVENTS.QUIZ_CREATED, {
+            actorId: req.user.id,
+            courseId: Number(course_id),
+            courseTitle: courses[0].title,
+            quizId: saved.quizId,
+            quizTitle: title || 'Generated Quiz',
+            entityType: 'quiz',
+            entityId: saved.quizId,
+            referenceType: 'quiz',
+            referenceId: saved.quizId,
+            activityMetadata: { source: 'ai-context' },
+            ...getClientInfo(req)
+        });
         res.json({ message: 'Quiz generated and stored successfully', quiz_id: saved.quizId, quizCode: saved.quizCode, quiz: quizText, questions });
     } catch (err) {
         console.error('Quiz generation error:', err.response?.data || err);
@@ -486,7 +534,7 @@ router.post('/generate-from-file', authMiddleware, teacherMiddleware, upload.sin
         }
 
         const courseId = Number(req.body.course_id);
-        const [courses] = await db.query('SELECT id FROM courses WHERE id = ? AND teacher_id = ?', [courseId, req.user.id]);
+        const [courses] = await db.query('SELECT id, title FROM courses WHERE id = ? AND teacher_id = ?', [courseId, req.user.id]);
         if (courses.length === 0) {
             return res.status(403).json({ error: 'Not authorized for this course' });
         }
@@ -532,7 +580,19 @@ router.post('/generate-from-file', authMiddleware, teacherMiddleware, upload.sin
             quizText
         });
 
-        await logActivity({ actorId: req.user.id, courseId, entityType: 'quiz', entityId: saved.quizId, action: 'generated_quiz_from_file', metadata: { fileId: fileResult.insertId } });
+        eventBus.emitDomain(EVENTS.QUIZ_CREATED, {
+            actorId: req.user.id,
+            courseId,
+            courseTitle: courses[0].title,
+            quizId: saved.quizId,
+            quizTitle: req.body.title || `Quiz on ${req.file.originalname}`,
+            entityType: 'quiz',
+            entityId: saved.quizId,
+            referenceType: 'quiz',
+            referenceId: saved.quizId,
+            activityMetadata: { source: 'pdf-content', fileId: fileResult.insertId },
+            ...getClientInfo(req)
+        });
         res.status(201).json({ message: 'Quiz generated successfully', quiz_id: saved.quizId, quizCode: saved.quizCode, questions });
     } catch (error) {
         console.error('File quiz generation error:', error.response?.data || error);
@@ -623,7 +683,23 @@ router.post('/attempts/:attemptId/submit', authMiddleware, async (req, res) => {
         `, [score, quiz.questions.length, percentage, JSON.stringify(violations), attempt.id]);
 
         await connection.commit();
-        await logActivity({ actorId: req.user.id, targetUserId: req.user.id, courseId: quiz.courseId, entityType: 'quiz_attempt', entityId: attempt.id, action: 'submitted_quiz', metadata: { percentage } });
+        eventBus.emitDomain(EVENTS.QUIZ_SUBMITTED, {
+            actorId: req.user.id,
+            studentId: req.user.id,
+            teacherId: quiz.teacherId,
+            courseId: quiz.courseId,
+            quizId: quiz.id,
+            attemptId: attempt.id,
+            quizTitle: quiz.title,
+            studentName: req.user.username,
+            percentage,
+            entityType: 'quiz_attempt',
+            entityId: attempt.id,
+            referenceType: 'quiz_attempt',
+            referenceId: attempt.id,
+            activityMetadata: { percentage },
+            ...getClientInfo(req)
+        });
         res.json({ score, totalQuestions: quiz.questions.length, percentage, answers: answerSummary });
     } catch (error) {
         await connection.rollback();

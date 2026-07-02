@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const { authMiddleware, teacherMiddleware } = require('../middleware/authMiddleware');
+const eventBus = require('../events/eventBus');
+const EVENTS = require('../events/eventNames');
 
 // Get all courses visible to the authenticated user
 router.get('/', authMiddleware, async (req, res) => {
@@ -73,6 +75,18 @@ router.post('/', authMiddleware, teacherMiddleware, async (req, res) => {
             [title, description || null, req.user.id]
         );
 
+        eventBus.emitDomain(EVENTS.COURSE_CREATED, {
+            actorId: req.user.id,
+            courseId: result.insertId,
+            courseTitle: title,
+            entityType: 'course',
+            entityId: result.insertId,
+            referenceType: 'course',
+            referenceId: result.insertId,
+            activityMetadata: { title },
+            ...getClientInfo(req)
+        });
+
         res.status(201).json({ message: 'Course created successfully', courseId: result.insertId });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -96,6 +110,18 @@ router.put('/:id', authMiddleware, teacherMiddleware, async (req, res) => {
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Course not found' });
         }
+
+        eventBus.emitDomain(EVENTS.COURSE_UPDATED, {
+            actorId: req.user.id,
+            courseId: Number(req.params.id),
+            courseTitle: title,
+            entityType: 'course',
+            entityId: Number(req.params.id),
+            referenceType: 'course',
+            referenceId: Number(req.params.id),
+            activityMetadata: { title },
+            ...getClientInfo(req)
+        });
 
         res.json({ message: 'Course updated successfully' });
     } catch (error) {

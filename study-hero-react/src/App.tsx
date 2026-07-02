@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import './styles/App.css';
 import { clearAuthToken, getAuthRole, getAuthToken, isTokenExpired, refreshAccessToken } from './services/api';
+import { NotificationProvider } from './context/NotificationContext';
 
 // Pages
 import HomePage from './pages/HomePage';
@@ -94,8 +95,9 @@ const App: React.FC = () => {
   }, [location]);
 
   return (
-    <div className="content-wrapper">
-      <Routes>
+    <NotificationProvider authKey={location.pathname}>
+      <div className="content-wrapper">
+        <Routes>
         {/* Public Routes */}
         <Route path="/" element={<HomePage />} />
         <Route path="/login" element={<LoginPage />} />
@@ -181,8 +183,9 @@ const App: React.FC = () => {
 
         {/* Fallback Route */}
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </div>
+        </Routes>
+      </div>
+    </NotificationProvider>
   );
 };
 

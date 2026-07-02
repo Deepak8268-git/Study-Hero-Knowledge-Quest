@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { getAuthRole, getAuthToken, logout } from '../services/api';
+import NotificationBell from './NotificationBell';
 
 const Header: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -86,6 +87,7 @@ const Header: React.FC = () => {
           <div className="ml-4 flex items-center gap-3">
             {isAuthenticated ? (
               <>
+                <NotificationBell />
                 <Link 
                   to={getDashboardLink()} 
                   className="px-4 py-2 hover:text-accent transition-colors duration-300 border border-transparent hover:border-accent rounded-button"

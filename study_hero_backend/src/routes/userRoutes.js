@@ -14,8 +14,8 @@ const {
     getAccessTokenTtl
 } = require('../utils/tokens');
 const { validatePasswordStrength } = require('../utils/passwordPolicy');
-const { sendVerificationEmail } = require('../services/emailService');
-const { auditLog } = require('../services/auditService');
+const eventBus = require('../events/eventBus');
+const EVENTS = require('../events/eventNames');
 const { loginLimiter } = require('../middleware/rateLimiters');
 const { authMiddleware, teacherMiddleware } = require('../middleware/authMiddleware');
 
@@ -47,7 +47,14 @@ async function markFailedLogin(user, req) {
     const lockedUntil = attempts >= maxAttempts ? addMinutes(lockoutMinutes) : null;
 
     await db.query('UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?', [attempts, lockedUntil, user.id]);
-    await auditLog({ userId: user.id, action: lockedUntil ? 'account_locked_legacy_users_route' : 'login_failed_legacy_users_route', ...getClientInfo(req) });
+    eventBus.emitDomain(EVENTS.SECURITY_LOGIN_FAILED, {
+        userId: user.id,
+        actorId: user.id,
+        entityType: 'user',
+        entityId: user.id,
+        auditMetadata: { legacyRoute: true, locked: !!lockedUntil },
+        ...getClientInfo(req)
+    });
 }
 
 async function createLegacySession({ user, req, res }) {
@@ -68,9 +75,7 @@ async function createLegacyVerification(user, req) {
     await db.query('INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)', [user.id, hashToken(verificationToken), expiresAt]);
     await db.query('UPDATE users SET verification_sent_at = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
 
-    await sendVerificationEmail({ to: user.email, username: user.username, token: verificationToken })
-        .catch((emailError) => console.warn('Verification email skipped:', emailError.message));
-    await auditLog({ userId: user.id, action: 'email_verification_sent_legacy_users_route', ...getClientInfo(req) });
+    return verificationToken;
 }
 
 // Register new user with role-specific fields
@@ -136,8 +141,17 @@ router.post('/register', async (req, res) => {
 
         const [users] = await db.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
         const user = users[0];
-        await createLegacyVerification(user, req);
-        await auditLog({ userId: user.id, action: 'registered_legacy_users_route', ...getClientInfo(req) });
+        const verificationToken = await createLegacyVerification(user, req);
+        eventBus.emitDomain(EVENTS.USER_REGISTERED, {
+            userId: user.id,
+            actorId: user.id,
+            user,
+            verificationToken,
+            entityType: 'user',
+            entityId: user.id,
+            auditMetadata: { legacyRoute: true },
+            ...getClientInfo(req)
+        });
 
         res.status(201).json({
             message: 'User registered successfully',
@@ -178,7 +192,14 @@ router.post('/login', loginLimiter, async (req, res) => {
         await db.query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login_at = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
         const token = signAccessToken(user);
         await createLegacySession({ user, req, res });
-        await auditLog({ userId: user.id, action: 'login_success_legacy_users_route', ...getClientInfo(req) });
+        eventBus.emitDomain(EVENTS.SECURITY_LOGIN, {
+            userId: user.id,
+            actorId: user.id,
+            entityType: 'user',
+            entityId: user.id,
+            auditMetadata: { legacyRoute: true },
+            ...getClientInfo(req)
+        });
         res.json({ token, accessToken: token, expiresIn: getAccessTokenTtl(), user: publicUser(user) });
     } catch (error) {
         res.status(500).json({ error: error.message });

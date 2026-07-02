@@ -14,4 +14,12 @@ function resetPasswordEmail({ username, resetUrl }) {
     };
 }
 
-module.exports = { verificationEmail, resetPasswordEmail };
+function passwordChangedEmail({ username }) {
+    return {
+        subject: 'Your Study Hero password was changed',
+        text: `Hi ${username},\n\nYour Study Hero password was changed. If this was not you, reset your password immediately and contact support.`,
+        html: `<p>Hi ${username},</p><p>Your Study Hero password was changed.</p><p>If this was not you, reset your password immediately and contact support.</p>`
+    };
+}
+
+module.exports = { verificationEmail, resetPasswordEmail, passwordChangedEmail };

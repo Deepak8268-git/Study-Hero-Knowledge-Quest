@@ -1,5 +1,5 @@
 const nodemailer = require('nodemailer');
-const { verificationEmail, resetPasswordEmail } = require('../email/templates');
+const { verificationEmail, resetPasswordEmail, passwordChangedEmail } = require('../email/templates');
 
 function isEmailConfigured() {
     return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD && process.env.EMAIL_FROM);
@@ -46,8 +46,14 @@ async function sendPasswordResetEmail({ to, username, token }) {
     return sendEmail({ to, ...resetPasswordEmail({ username, resetUrl }) });
 }
 
+async function sendPasswordChangedEmail({ to, username }) {
+    return sendEmail({ to, ...passwordChangedEmail({ username }) });
+}
+
 module.exports = {
+    sendEmail,
     sendVerificationEmail,
     sendPasswordResetEmail,
+    sendPasswordChangedEmail,
     isEmailConfigured
 };

@@ -1,3 +1,4 @@
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -5,6 +6,9 @@ const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
 const ensureCommercialSchema = require('./src/config/ensureCommercialSchema');
+const eventBus = require('./src/events/eventBus');
+const registerEventListeners = require('./src/events/registerEventListeners');
+const { initializeSocketServer } = require('./src/socket/socketServer');
 const requestLogger = require('./src/middleware/requestLogger');
 const { authLimiter } = require('./src/middleware/rateLimiters');
 
@@ -49,6 +53,8 @@ const courseRoutes = require('./src/routes/courseRoutes');
 const assignmentRoutes = require('./src/routes/assignmentRoutes');
 const quizRoutes = require('./src/routes/quizRoutes');
 const dashboardRoutes = require('./src/routes/dashboardRoutes');
+const notificationRoutes = require('./src/routes/notificationRoutes');
+const announcementRoutes = require('./src/routes/announcementRoutes');
 app.use('/api/quiz', quizRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
@@ -59,6 +65,8 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/assignments', assignmentRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/announcements', announcementRoutes);
 
 // Default route
 app.get('/', (req, res) => {
@@ -80,12 +88,15 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
+const httpServer = http.createServer(app);
+initializeSocketServer(httpServer, allowedOrigins);
+registerEventListeners(eventBus);
 
 async function startServer() {
     try {
         await ensureCommercialSchema();
 
-        app.listen(PORT, () => {
+        httpServer.listen(PORT, () => {
             console.log(`Server running on port ${PORT}`);
             console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
             console.log('Available routes:');
@@ -99,6 +110,8 @@ async function startServer() {
             console.log('- GET /api/dashboard/student');
             console.log('- GET /api/quiz/:id');
             console.log('- POST /api/quiz/:id/attempts');
+            console.log('- GET /api/notifications');
+            console.log('- POST /api/announcements');
         });
     } catch (error) {
         console.error('Failed to start server:', error);

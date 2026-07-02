@@ -187,6 +187,13 @@ const StudentDashboardPage: React.FC = () => {
     }
 
     loadDashboard();
+
+    const handleDashboardRefresh = () => {
+      loadDashboard();
+    };
+
+    window.addEventListener('studyhero:dashboard-refresh', handleDashboardRefresh);
+    return () => window.removeEventListener('studyhero:dashboard-refresh', handleDashboardRefresh);
   }, [navigate]);
   
   const handleSubmitQuizCode = async (e: React.FormEvent) => {
