@@ -42,20 +42,20 @@ const NotificationBell: React.FC = () => {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-3 w-80 max-w-[calc(100vw-2rem)] bg-white text-gray-800 rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <h3 className="font-semibold text-gray-800">Notifications</h3>
+        <div className="fixed top-0 right-0 h-screen w-96 max-w-[100vw] bg-white text-gray-800 shadow-2xl border-l border-gray-100 z-[80] overflow-hidden" role="dialog" aria-label="Notification center">
+          <div className="px-4 py-4 border-b border-gray-100 flex items-center justify-between bg-primary text-white">
+            <h3 className="font-semibold">Notification Center</h3>
             <button
               type="button"
               onClick={markAllRead}
               disabled={unreadCount === 0}
-              className="text-xs text-primary hover:text-secondary disabled:text-gray-400"
+              className="text-xs text-white hover:text-accent disabled:text-white/50"
             >
               Mark all read
             </button>
           </div>
 
-          <div className="max-h-96 overflow-y-auto">
+          <div className="h-[calc(100vh-4rem)] overflow-y-auto">
             {loading && notifications.length === 0 ? (
               <div className="p-4 text-sm text-gray-500">Loading...</div>
             ) : notifications.length === 0 ? (

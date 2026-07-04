@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Study Hero">
+  <rect width="512" height="512" rx="96" fill="#004d99"/>
+  <path d="M256 88 96 164l160 76 160-76-160-76Z" fill="#ffa500"/>
+  <path d="M144 224v92c0 45 50 82 112 82s112-37 112-82v-92l-112 54-112-54Z" fill="#fff"/>
+  <path d="M416 174v154" stroke="#ffa500" stroke-width="28" stroke-linecap="round"/>
+</svg>

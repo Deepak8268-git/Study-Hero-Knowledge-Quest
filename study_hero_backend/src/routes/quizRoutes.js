@@ -32,6 +32,81 @@ function normalizeSettings(settings = {}) {
     };
 }
 
+function parseGenerationOptions(input = {}) {
+    const rawTypes = input.questionTypes || input.question_types || input.questionType || input.question_type;
+    let questionTypes = Array.isArray(rawTypes) ? rawTypes : [];
+    if (typeof rawTypes === 'string') {
+        try {
+            const parsed = JSON.parse(rawTypes);
+            questionTypes = Array.isArray(parsed) ? parsed : rawTypes.split(',').map((item) => item.trim());
+        } catch {
+            questionTypes = rawTypes.split(',').map((item) => item.trim());
+        }
+    }
+
+    const requestedCount = Number(input.questionCount || input.question_count || 5);
+    const marksPerQuestion = Number(input.marksPerQuestion || input.marks_per_question || 1);
+    return {
+        questionCount: Number.isFinite(requestedCount) ? Math.min(Math.max(Math.round(requestedCount), 1), 50) : 5,
+        difficulty: String(input.difficulty || 'Medium'),
+        questionTypes: questionTypes.length ? questionTypes : ['MCQ'],
+        marksPerQuestion: Number.isFinite(marksPerQuestion) ? Math.max(marksPerQuestion, 1) : 1,
+        bloomLevel: String(input.bloomLevel || input.bloom_level || 'Understand')
+    };
+}
+
+function buildGenerationPrompt(options, sourceLabel) {
+    return [
+        `Create exactly ${options.questionCount} quiz questions from the provided ${sourceLabel}.`,
+        `Difficulty: ${options.difficulty}.`,
+        `Question types to include: ${options.questionTypes.join(', ')}.`,
+        `Marks per question: ${options.marksPerQuestion}.`,
+        `Bloom taxonomy level: ${options.bloomLevel}.`,
+        'Return only parsable quiz content using this exact structure for every question:',
+        'Q1. Question text',
+        'A) Option or answer choice',
+        'B) Option or answer choice',
+        'C) Option or answer choice',
+        'D) Option or answer choice',
+        'Correct Answer: A',
+        'For True/False questions, use A) True and B) False plus two concise distractor/clarification options.',
+        'For fill-in-the-blank or short-answer questions, put the expected answer as one option and plausible alternatives as the other options.',
+        'Do not include explanations, markdown tables, numbering outside Q1/Q2 format, or text before/after the quiz.'
+    ].join('\n');
+}
+
+function decodePdfLiteral(value) {
+    return value
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\\(/g, '(')
+        .replace(/\\\)/g, ')')
+        .replace(/\\\\/g, '\\');
+}
+
+function extractLiteralPdfText(buffer) {
+    const raw = buffer.toString('latin1');
+    const matches = [];
+    const literalPattern = /\((?:\\.|[^\\)]){3,}\)\s*Tj/g;
+    let match;
+    while ((match = literalPattern.exec(raw)) !== null) {
+        matches.push(decodePdfLiteral(match[0].replace(/\)\s*Tj$/, '').slice(1)));
+    }
+    return matches.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+async function extractPdfText(buffer) {
+    try {
+        const parsedPdf = await pdfParse(buffer);
+        return parsedPdf.text?.trim() || '';
+    } catch (error) {
+        const fallbackText = extractLiteralPdfText(buffer);
+        if (fallbackText) return fallbackText;
+        throw error;
+    }
+}
+
 function parseGeneratedQuiz(text) {
     const questionBlocks = text
         .split(/\n(?=Q\d+\.|\d+\.|Question\s+\d+)/i)
@@ -457,6 +532,7 @@ router.post('/:id/activate', authMiddleware, teacherMiddleware, async (req, res)
 
 router.post('/generate', authMiddleware, teacherMiddleware, async (req, res) => {
     const { context, course_id, assignment_id, title, description, settings } = req.body;
+    const generationOptions = parseGenerationOptions(req.body);
 
     try {
         if (!process.env.MISTRAL_API_KEY) {
@@ -477,7 +553,7 @@ router.post('/generate', authMiddleware, teacherMiddleware, async (req, res) => 
             {
                 model: 'mistral-medium',
                 messages: [
-                    { role: 'system', content: 'Create 5 MCQs from the provided context. Use this exact format: Q1. Question?\nA) Option\nB) Option\nC) Option\nD) Option\nCorrect Answer: A' },
+                    { role: 'system', content: buildGenerationPrompt(generationOptions, 'context') },
                     { role: 'user', content: context }
                 ]
             },
@@ -498,7 +574,7 @@ router.post('/generate', authMiddleware, teacherMiddleware, async (req, res) => 
             assignment_id,
             teacher_id: req.user.id,
             questions,
-            settings,
+            settings: { ...(settings || {}), generationOptions },
             source: 'ai-context',
             quizText
         });
@@ -513,7 +589,7 @@ router.post('/generate', authMiddleware, teacherMiddleware, async (req, res) => 
             entityId: saved.quizId,
             referenceType: 'quiz',
             referenceId: saved.quizId,
-            activityMetadata: { source: 'ai-context' },
+            activityMetadata: { source: 'ai-context', generationOptions },
             ...getClientInfo(req)
         });
         res.json({ message: 'Quiz generated and stored successfully', quiz_id: saved.quizId, quizCode: saved.quizCode, quiz: quizText, questions });
@@ -539,8 +615,8 @@ router.post('/generate-from-file', authMiddleware, teacherMiddleware, upload.sin
             return res.status(403).json({ error: 'Not authorized for this course' });
         }
 
-        const parsedPdf = await pdfParse(req.file.buffer);
-        const context = parsedPdf.text?.trim();
+        const generationOptions = parseGenerationOptions(req.body);
+        const context = await extractPdfText(req.file.buffer);
         if (!context) {
             return res.status(400).json({ error: 'No readable text was found in the PDF' });
         }
@@ -555,7 +631,7 @@ router.post('/generate-from-file', authMiddleware, teacherMiddleware, upload.sin
             {
                 model: 'mistral-medium',
                 messages: [
-                    { role: 'system', content: 'Create 5 MCQs from the provided PDF text. Use this exact format: Q1. Question?\nA) Option\nB) Option\nC) Option\nD) Option\nCorrect Answer: A' },
+                    { role: 'system', content: buildGenerationPrompt(generationOptions, 'PDF text') },
                     { role: 'user', content: context.slice(0, 12000) }
                 ]
             },
@@ -575,7 +651,7 @@ router.post('/generate-from-file', authMiddleware, teacherMiddleware, upload.sin
             assignment_id: req.body.assignment_id || null,
             teacher_id: req.user.id,
             questions,
-            settings: req.body.settings ? JSON.parse(req.body.settings) : {},
+            settings: { ...(req.body.settings ? JSON.parse(req.body.settings) : {}), generationOptions },
             source: 'pdf-content',
             quizText
         });
@@ -590,7 +666,7 @@ router.post('/generate-from-file', authMiddleware, teacherMiddleware, upload.sin
             entityId: saved.quizId,
             referenceType: 'quiz',
             referenceId: saved.quizId,
-            activityMetadata: { source: 'pdf-content', fileId: fileResult.insertId },
+            activityMetadata: { source: 'pdf-content', fileId: fileResult.insertId, generationOptions },
             ...getClientInfo(req)
         });
         res.status(201).json({ message: 'Quiz generated successfully', quiz_id: saved.quizId, quizCode: saved.quizCode, questions });
@@ -710,4 +786,117 @@ router.post('/attempts/:attemptId/submit', authMiddleware, async (req, res) => {
     }
 });
 
+router.put('/:id/questions', authMiddleware, teacherMiddleware, async (req, res) => {
+    const connection = await db.getConnection();
+    try {
+        const { title, description, questions = [], settings } = req.body;
+        if (!Array.isArray(questions) || questions.length === 0) {
+            return res.status(400).json({ error: 'questions are required' });
+        }
+
+        const [quizzes] = await connection.query('SELECT id FROM quizzes WHERE id = ? AND teacher_id = ?', [req.params.id, req.user.id]);
+        if (quizzes.length === 0) {
+            return res.status(404).json({ error: 'Quiz not found' });
+        }
+
+        const normalizedSettings = normalizeSettings(settings || {});
+        await connection.beginTransaction();
+        await connection.query(`
+            UPDATE quizzes
+            SET title = COALESCE(?, title), description = COALESCE(?, description), quiz_text = ?,
+                duration_minutes = ?, passing_score = ?, settings_json = ?
+            WHERE id = ? AND teacher_id = ?
+        `, [title || null, description || null, JSON.stringify(questions), normalizedSettings.timeLimit, normalizedSettings.passingScore, JSON.stringify(normalizedSettings), req.params.id, req.user.id]);
+
+        await connection.query('DELETE FROM quiz_questions WHERE quiz_id = ?', [req.params.id]);
+        for (let questionIndex = 0; questionIndex < questions.length; questionIndex++) {
+            const question = questions[questionIndex];
+            if (!question.question || !Array.isArray(question.options) || question.options.length < 2 || !question.correctAnswer) {
+                throw new Error('Each question requires text, at least two options, and a correct answer');
+            }
+            const [questionResult] = await connection.query(`
+                INSERT INTO quiz_questions (quiz_id, question_text, explanation, display_order)
+                VALUES (?, ?, ?, ?)
+            `, [req.params.id, question.question, question.explanation || '', questionIndex + 1]);
+            for (let optionIndex = 0; optionIndex < question.options.length; optionIndex++) {
+                const option = question.options[optionIndex];
+                await connection.query(`
+                    INSERT INTO quiz_options (question_id, option_text, is_correct, display_order)
+                    VALUES (?, ?, ?, ?)
+                `, [questionResult.insertId, option, option === question.correctAnswer, optionIndex + 1]);
+            }
+        }
+
+        await connection.commit();
+        res.json({ message: 'Quiz questions updated successfully' });
+    } catch (error) {
+        await connection.rollback();
+        console.error('Quiz question update error:', error);
+        res.status(500).json({ error: error.message || 'Failed to update quiz questions' });
+    } finally {
+        connection.release();
+    }
+});
+
+router.post('/:id/deactivate', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const [result] = await db.query('UPDATE quizzes SET status = \'draft\' WHERE id = ? AND teacher_id = ?', [req.params.id, req.user.id]);
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Quiz not found' });
+        res.json({ message: 'Quiz deactivated successfully' });
+    } catch (error) {
+        console.error('Quiz deactivate error:', error);
+        res.status(500).json({ error: 'Failed to deactivate quiz' });
+    }
+});
+
+router.post('/:id/code', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const quizCode = generateQuizCode();
+        const [result] = await db.query('UPDATE quizzes SET quiz_code = ? WHERE id = ? AND teacher_id = ?', [quizCode, req.params.id, req.user.id]);
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Quiz not found' });
+        res.json({ message: 'Quiz code generated successfully', quizCode });
+    } catch (error) {
+        console.error('Quiz code generation error:', error);
+        res.status(500).json({ error: 'Failed to generate quiz code' });
+    }
+});
+
+router.post('/:id/duplicate', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const quiz = await getQuizWithQuestions(req.params.id);
+        if (!quiz || quiz.teacherId !== req.user.id) return res.status(404).json({ error: 'Quiz not found' });
+        const saved = await saveQuiz({
+            title: `${quiz.title} Copy`,
+            description: quiz.description,
+            course_id: quiz.courseId,
+            teacher_id: req.user.id,
+            questions: quiz.questions,
+            settings: quiz.settings,
+            source: quiz.source || 'manual',
+            quizText: JSON.stringify(quiz.questions)
+        });
+        eventBus.emitDomain(EVENTS.QUIZ_CREATED, {
+            actorId: req.user.id,
+            courseId: Number(quiz.courseId),
+            courseTitle: quiz.courseName,
+            quizId: saved.quizId,
+            quizTitle: `${quiz.title} Copy`,
+            entityType: 'quiz',
+            entityId: saved.quizId,
+            referenceType: 'quiz',
+            referenceId: saved.quizId,
+            activityMetadata: { duplicatedFrom: quiz.id },
+            ...getClientInfo(req)
+        });
+        res.status(201).json({ message: 'Quiz duplicated successfully', quiz_id: saved.quizId, quizCode: saved.quizCode });
+    } catch (error) {
+        console.error('Quiz duplicate error:', error);
+        res.status(500).json({ error: 'Failed to duplicate quiz' });
+    }
+});
 module.exports = router;
+
+
+
+
+

@@ -1,6 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL;
+import { API_BASE_URL } from './api';
 let socket: Socket | null = null;
 
 export const getSocket = () => socket;

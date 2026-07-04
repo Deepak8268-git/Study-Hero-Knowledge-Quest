@@ -143,7 +143,7 @@ router.get('/student', authMiddleware, async (req, res) => {
             JOIN assignments a ON a.course_id = e.course_id
             JOIN courses c ON c.id = a.course_id
             LEFT JOIN submissions s ON s.assignment_no = a.id AND s.student_id = e.student_id
-            WHERE e.student_id = ? AND e.status = 'active'
+            WHERE e.student_id = ? AND e.status = 'active' AND COALESCE(a.status, 'published') = 'published'
             ORDER BY a.due_date ASC, a.created_at DESC
         `, [studentId]);
 
@@ -215,3 +215,5 @@ router.get('/student', authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+
+

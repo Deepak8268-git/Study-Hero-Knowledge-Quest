@@ -1,5 +1,12 @@
 const express = require('express');
 const router = express.Router();
+
+function getClientInfo(req) {
+    return {
+        ipAddress: req.ip || req.connection?.remoteAddress || null,
+        userAgent: req.get('user-agent') || null
+    };
+}
 const db = require('../config/db');
 const { authMiddleware, teacherMiddleware } = require('../middleware/authMiddleware');
 const eventBus = require('../events/eventBus');
@@ -32,6 +39,105 @@ router.get('/', authMiddleware, async (req, res) => {
     }
 });
 
+// List enrolled students for a teacher-owned course
+router.get('/:id/enrollments', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const [courses] = await db.query('SELECT id FROM courses WHERE id = ? AND teacher_id = ?', [req.params.id, req.user.id]);
+        if (courses.length === 0) {
+            return res.status(404).json({ error: 'Course not found' });
+        }
+
+        const [students] = await db.query(`
+            SELECT u.id, u.username, u.email, e.status, e.enrollment_date
+            FROM enrollments e
+            JOIN users u ON u.id = e.student_id
+            WHERE e.course_id = ?
+            ORDER BY u.username
+        `, [req.params.id]);
+
+        res.json(students);
+    } catch (error) {
+        console.error('Course enrollment list error:', error);
+        res.status(500).json({ error: 'Failed to load enrolled students' });
+    }
+});
+
+// Enroll a student into a teacher-owned course
+router.post('/:id/enrollments', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const { studentId, email } = req.body;
+        const [courses] = await db.query('SELECT id, title FROM courses WHERE id = ? AND teacher_id = ?', [req.params.id, req.user.id]);
+        if (courses.length === 0) {
+            return res.status(404).json({ error: 'Course not found' });
+        }
+
+        const params = studentId ? [studentId] : [email];
+        const lookup = studentId ? 'id = ?' : 'email = ?';
+        const [students] = await db.query(`SELECT id, username, email FROM users WHERE role = 'student' AND ${lookup}`, params);
+        if (students.length === 0) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+
+        const student = students[0];
+        await db.query(`
+            INSERT INTO enrollments (student_id, course_id, status)
+            VALUES (?, ?, 'active')
+            ON DUPLICATE KEY UPDATE status = 'active', enrollment_date = CURRENT_TIMESTAMP
+        `, [student.id, req.params.id]);
+
+        eventBus.emitDomain(EVENTS.COURSE_UPDATED, {
+            actorId: req.user.id,
+            studentId: student.id,
+            courseId: Number(req.params.id),
+            courseTitle: courses[0].title,
+            entityType: 'course',
+            entityId: Number(req.params.id),
+            referenceType: 'course',
+            referenceId: Number(req.params.id),
+            activityMetadata: { enrolledStudentId: student.id },
+            auditMetadata: { action: 'student_enrolled', studentId: student.id },
+            ...getClientInfo(req)
+        });
+
+        res.status(201).json({ message: 'Student enrolled successfully', student });
+    } catch (error) {
+        console.error('Course enrollment error:', error);
+        res.status(500).json({ error: 'Failed to enroll student' });
+    }
+});
+
+// Remove a student from a teacher-owned course
+router.delete('/:id/enrollments/:studentId', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const [courses] = await db.query('SELECT id, title FROM courses WHERE id = ? AND teacher_id = ?', [req.params.id, req.user.id]);
+        if (courses.length === 0) {
+            return res.status(404).json({ error: 'Course not found' });
+        }
+
+        const [result] = await db.query('UPDATE enrollments SET status = \'dropped\' WHERE course_id = ? AND student_id = ?', [req.params.id, req.params.studentId]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Enrollment not found' });
+        }
+
+        eventBus.emitDomain(EVENTS.COURSE_UPDATED, {
+            actorId: req.user.id,
+            studentId: Number(req.params.studentId),
+            courseId: Number(req.params.id),
+            courseTitle: courses[0].title,
+            entityType: 'course',
+            entityId: Number(req.params.id),
+            referenceType: 'course',
+            referenceId: Number(req.params.id),
+            auditMetadata: { action: 'student_unenrolled', studentId: Number(req.params.studentId) },
+            ...getClientInfo(req)
+        });
+
+        res.json({ message: 'Student removed from course' });
+    } catch (error) {
+        console.error('Course unenrollment error:', error);
+        res.status(500).json({ error: 'Failed to remove student from course' });
+    }
+});
 // Get course by ID when the user owns it or is enrolled in it
 router.get('/:id', authMiddleware, async (req, res) => {
     try {
@@ -145,3 +251,4 @@ router.delete('/:id', authMiddleware, teacherMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+

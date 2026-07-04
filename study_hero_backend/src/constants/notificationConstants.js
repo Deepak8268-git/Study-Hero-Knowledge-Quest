@@ -19,7 +19,9 @@ const NOTIFICATION_TYPE = {
     USER_EMAIL_VERIFIED: 'user.email_verified',
     USER_PASSWORD_CHANGED: 'user.password_changed',
     SECURITY_LOGIN: 'security.login',
-    SECURITY_LOGOUT: 'security.logout'
+    SECURITY_LOGOUT: 'security.logout',
+    AI_OPERATION_COMPLETED: 'ai.operation_completed',
+    LMS_OPERATION_COMPLETED: 'lms.operation_completed'
 };
 
 const NOTIFICATION_COPY = {

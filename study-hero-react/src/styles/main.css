@@ -126,3 +126,60 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #003366;
 } 
+/* Enterprise UX layer */
+:root {
+  --app-bg: #f9fafb;
+  --app-surface: #ffffff;
+  --app-text: #1f2937;
+  --app-muted: #6b7280;
+  --app-border: #e5e7eb;
+}
+
+:root[data-theme='dark'] {
+  --app-bg: #111827;
+  --app-surface: #1f2937;
+  --app-text: #f9fafb;
+  --app-muted: #cbd5e1;
+  --app-border: #374151;
+}
+
+:root[data-theme='dark'] body,
+:root[data-theme='dark'] .enterprise-page,
+:root[data-theme='dark'] .bg-gray-50 {
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+:root[data-theme='dark'] .bg-white {
+  background-color: var(--app-surface) !important;
+  color: var(--app-text);
+}
+
+:root[data-theme='dark'] .text-gray-800,
+:root[data-theme='dark'] .text-gray-900,
+:root[data-theme='dark'] .text-gray-700 {
+  color: var(--app-text) !important;
+}
+
+:root[data-theme='dark'] .text-gray-600,
+:root[data-theme='dark'] .text-gray-500 {
+  color: var(--app-muted) !important;
+}
+
+:root[data-theme='dark'] .border-gray-100,
+:root[data-theme='dark'] .border-gray-200,
+:root[data-theme='dark'] .border-gray-300 {
+  border-color: var(--app-border) !important;
+}
+
+:focus-visible {
+  outline: 3px solid #ffa500;
+  outline-offset: 2px;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

@@ -27,7 +27,7 @@ async function canAccessCourse(user, courseId) {
 
 async function canAccessAssignment(user, assignmentId) {
     const [assignments] = await db.query(`
-        SELECT a.id, a.course_id, c.teacher_id
+        SELECT a.id, a.course_id, a.status, c.teacher_id
         FROM assignments a
         JOIN courses c ON c.id = a.course_id
         WHERE a.id = ?
@@ -46,7 +46,7 @@ async function canAccessAssignment(user, assignmentId) {
         'SELECT id FROM enrollments WHERE course_id = ? AND student_id = ? AND status = \'active\'',
         [assignment.course_id, user.id]
     );
-    return { allowed: enrollments.length > 0, assignment };
+    return { allowed: enrollments.length > 0 && (assignment.status || 'published') === 'published', assignment };
 }
 
 // Get all assignments for an accessible course
@@ -114,23 +114,10 @@ router.post('/', authMiddleware, teacherMiddleware, async (req, res) => {
         }
 
         const [result] = await db.query(`
-            INSERT INTO assignments (course_id, title, description, due_date)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO assignments (course_id, title, description, due_date, status)
+            VALUES (?, ?, ?, ?, 'draft')
         `, [course_id, title, description || null, due_date || null]);
 
-        eventBus.emitDomain(EVENTS.ASSIGNMENT_CREATED, {
-            actorId: req.user.id,
-            courseId: Number(course_id),
-            courseTitle: courses[0].title,
-            assignmentId: result.insertId,
-            assignmentTitle: title,
-            entityType: 'assignment',
-            entityId: result.insertId,
-            referenceType: 'assignment',
-            referenceId: result.insertId,
-            activityMetadata: { title },
-            ...getClientInfo(req)
-        });
 
         res.status(201).json({
             message: 'Assignment created successfully',
@@ -194,6 +181,66 @@ router.delete('/:id', authMiddleware, teacherMiddleware, async (req, res) => {
     }
 });
 
+
+// Get submissions for an assignment (teacher only)
+router.get('/:id/submissions', authMiddleware, teacherMiddleware, async (req, res) => {
+    try {
+        const [assignments] = await db.query(`
+            SELECT a.id, a.title, a.course_id, c.teacher_id
+            FROM assignments a
+            JOIN courses c ON c.id = a.course_id
+            WHERE a.id = ?
+        `, [req.params.id]);
+
+        if (assignments.length === 0 || assignments[0].teacher_id !== req.user.id) {
+            return res.status(404).json({ error: 'Assignment not found' });
+        }
+
+        const [submissions] = await db.query(`
+            SELECT s.id, s.assignment_no, s.student_id, s.submission_text, s.submission_file,
+                   s.grade, s.status, s.submitted_at, s.feedback, u.username AS student_name, u.email AS student_email
+            FROM submissions s
+            JOIN users u ON u.id = s.student_id
+            WHERE s.assignment_no = ?
+            ORDER BY s.submitted_at DESC, s.id DESC
+        `, [req.params.id]);
+
+        res.json(submissions);
+    } catch (error) {
+        console.error('Assignment submissions error:', error);
+        res.status(500).json({ error: 'Failed to load submissions' });
+    }
+});
+
+// Get the authenticated student's submission status for an assignment
+router.get('/:id/my-submission', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.role !== 'student') {
+            return res.status(403).json({ error: 'Only students can view their own submission status here' });
+        }
+
+        const access = await canAccessAssignment(req.user, req.params.id);
+        if (!access.assignment) {
+            return res.status(404).json({ error: 'Assignment not found' });
+        }
+        if (!access.allowed) {
+            return res.status(403).json({ error: 'Not authorized to view this assignment' });
+        }
+
+        const [rows] = await db.query(`
+            SELECT id, assignment_no, student_id, submission_text, submission_file, grade, status, submitted_at, feedback
+            FROM submissions
+            WHERE assignment_no = ? AND student_id = ?
+            ORDER BY submitted_at DESC, id DESC
+            LIMIT 1
+        `, [req.params.id, req.user.id]);
+
+        res.json(rows[0] || null);
+    } catch (error) {
+        console.error('Student submission status error:', error);
+        res.status(500).json({ error: 'Failed to load submission status' });
+    }
+});
 // Submit assignment (student only)
 router.post('/:id/submissions', authMiddleware, async (req, res) => {
     try {
@@ -203,7 +250,7 @@ router.post('/:id/submissions', authMiddleware, async (req, res) => {
 
         const { submission_text, submission_file } = req.body;
         const [assignments] = await db.query(`
-            SELECT a.id, a.title, a.course_id, c.title AS course_title, c.teacher_id
+            SELECT a.id, a.title, a.course_id, a.status, c.title AS course_title, c.teacher_id
             FROM assignments a
             JOIN courses c ON c.id = a.course_id
             WHERE a.id = ?
@@ -214,6 +261,9 @@ router.post('/:id/submissions', authMiddleware, async (req, res) => {
         }
 
         const assignment = assignments[0];
+        if ((assignment.status || 'published') !== 'published') {
+            return res.status(403).json({ error: 'Assignment is not published yet' });
+        }
         const enrolled = await canAccessCourse(req.user, assignment.course_id);
         if (!enrolled) {
             return res.status(403).json({ error: 'Not authorized to submit this assignment' });
@@ -266,7 +316,7 @@ router.post('/:id/submissions', authMiddleware, async (req, res) => {
 // Grade assignment submission (teacher only)
 router.patch('/submissions/:submissionId/grade', authMiddleware, teacherMiddleware, async (req, res) => {
     try {
-        const { grade } = req.body;
+        const { grade, feedback } = req.body;
         if (grade === undefined || grade === null || Number.isNaN(Number(grade))) {
             return res.status(400).json({ error: 'grade is required' });
         }
@@ -289,8 +339,8 @@ router.patch('/submissions/:submissionId/grade', authMiddleware, teacherMiddlewa
         }
 
         await db.query(
-            'UPDATE submissions SET grade = ?, status = \'graded\' WHERE id = ?',
-            [Number(grade), req.params.submissionId]
+            'UPDATE submissions SET grade = ?, feedback = ?, status = \'graded\' WHERE id = ?',
+            [Number(grade), feedback || null, req.params.submissionId]
         );
 
         eventBus.emitDomain(EVENTS.ASSIGNMENT_GRADED, {
@@ -316,3 +366,6 @@ router.patch('/submissions/:submissionId/grade', authMiddleware, teacherMiddlewa
 });
 
 module.exports = router;
+
+
+

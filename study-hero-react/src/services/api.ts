@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.REACT_APP_API_URL;
+export const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 export const getAuthToken = () => localStorage.getItem('authToken');
 export const setAuthToken = (token: string) => localStorage.setItem('authToken', token);

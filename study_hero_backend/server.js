@@ -55,6 +55,8 @@ const quizRoutes = require('./src/routes/quizRoutes');
 const dashboardRoutes = require('./src/routes/dashboardRoutes');
 const notificationRoutes = require('./src/routes/notificationRoutes');
 const announcementRoutes = require('./src/routes/announcementRoutes');
+const aiRoutes = require('./src/routes/aiRoutes');
+const lmsRoutes = require('./src/routes/lmsRoutes');
 app.use('/api/quiz', quizRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
@@ -67,7 +69,16 @@ app.use('/api/courses', courseRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/announcements', announcementRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/lms', lmsRoutes);
 
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        service: 'Study Hero API',
+        timestamp: new Date().toISOString()
+    });
+});
 // Default route
 app.get('/', (req, res) => {
     res.json({
@@ -112,6 +123,8 @@ async function startServer() {
             console.log('- POST /api/quiz/:id/attempts');
             console.log('- GET /api/notifications');
             console.log('- POST /api/announcements');
+            console.log('- POST /api/ai/assistant/chat');
+            console.log('- GET /api/lms/timetable');
         });
     } catch (error) {
         console.error('Failed to start server:', error);

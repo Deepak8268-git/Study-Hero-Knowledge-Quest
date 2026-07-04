@@ -341,6 +341,467 @@ async function ensureCommercialSchema() {
         )
     `);
 
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS ai_conversations (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            course_id INT NULL,
+            title VARCHAR(150) NOT NULL,
+            mode VARCHAR(50) DEFAULT 'assistant',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+            INDEX idx_ai_conversations_user_updated (user_id, updated_at),
+            INDEX idx_ai_conversations_course (course_id)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS ai_conversation_messages (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            conversation_id INT NOT NULL,
+            role ENUM('user', 'assistant', 'system') NOT NULL,
+            content LONGTEXT NOT NULL,
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE,
+            INDEX idx_ai_messages_conversation_created (conversation_id, created_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS ai_documents (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            course_id INT NULL,
+            title VARCHAR(255) NOT NULL,
+            original_name VARCHAR(255),
+            mime_type VARCHAR(100),
+            size_bytes INT DEFAULT 0,
+            status ENUM('processing', 'processed', 'failed') DEFAULT 'processing',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+            INDEX idx_ai_documents_user_created (user_id, created_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS ai_document_chunks (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            document_id INT NOT NULL,
+            chunk_index INT NOT NULL,
+            content LONGTEXT NOT NULL,
+            embedding_provider VARCHAR(50),
+            embedding_status ENUM('pending', 'ready', 'failed') DEFAULT 'pending',
+            vector_ref VARCHAR(255),
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (document_id) REFERENCES ai_documents(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_ai_document_chunk (document_id, chunk_index),
+            INDEX idx_ai_chunks_vector_ref (vector_ref)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS ai_artifacts (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            course_id INT NULL,
+            type VARCHAR(50) NOT NULL,
+            title VARCHAR(150) NOT NULL,
+            content LONGTEXT NOT NULL,
+            source_type VARCHAR(50),
+            source_id INT,
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+            INDEX idx_ai_artifacts_user_type_created (user_id, type, created_at),
+            INDEX idx_ai_artifacts_course_type (course_id, type)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS ai_recommendations (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            course_id INT NULL,
+            title VARCHAR(150) NOT NULL,
+            recommendation LONGTEXT NOT NULL,
+            priority ENUM('LOW', 'NORMAL', 'HIGH', 'CRITICAL') DEFAULT 'NORMAL',
+            status ENUM('active', 'dismissed', 'completed') DEFAULT 'active',
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+            INDEX idx_ai_recommendations_user_status (user_id, status, created_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS ai_usage_logs (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            feature VARCHAR(80) NOT NULL,
+            provider VARCHAR(50) NOT NULL,
+            model VARCHAR(100),
+            input_tokens INT DEFAULT 0,
+            output_tokens INT DEFAULT 0,
+            total_tokens INT DEFAULT 0,
+            latency_ms INT DEFAULT 0,
+            estimated_cost DECIMAL(10,6) DEFAULT 0,
+            status ENUM('success', 'failure') DEFAULT 'success',
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_ai_usage_user_created (user_id, created_at),
+            INDEX idx_ai_usage_feature_created (feature, created_at)
+        )
+    `);
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS attendance_sessions (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            course_id INT NOT NULL,
+            teacher_id INT NOT NULL,
+            title VARCHAR(150) NOT NULL,
+            session_date DATE NOT NULL,
+            start_time TIME NULL,
+            end_time TIME NULL,
+            status ENUM('draft', 'open', 'closed') DEFAULT 'open',
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_attendance_sessions_course_date (course_id, session_date)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS attendance_records (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            session_id INT NOT NULL,
+            student_id INT NOT NULL,
+            status ENUM('present', 'absent', 'late', 'excused') NOT NULL DEFAULT 'absent',
+            remarks TEXT,
+            marked_by INT,
+            marked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (marked_by) REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE KEY unique_attendance_record (session_id, student_id),
+            INDEX idx_attendance_records_student (student_id, status)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS timetable_entries (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            course_id INT NOT NULL,
+            teacher_id INT NOT NULL,
+            subject VARCHAR(150) NOT NULL,
+            classroom VARCHAR(100),
+            day_of_week TINYINT NOT NULL,
+            start_time TIME NOT NULL,
+            end_time TIME NOT NULL,
+            effective_from DATE NULL,
+            effective_to DATE NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_timetable_course_day (course_id, day_of_week, start_time)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS calendar_events (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            course_id INT NULL,
+            created_by INT NOT NULL,
+            type ENUM('quiz', 'assignment', 'attendance', 'announcement', 'holiday', 'event', 'study_plan', 'ai_reminder') NOT NULL,
+            title VARCHAR(150) NOT NULL,
+            description TEXT,
+            start_at DATETIME NOT NULL,
+            end_at DATETIME NULL,
+            visibility ENUM('course', 'private', 'global') DEFAULT 'course',
+            reference_type VARCHAR(50),
+            reference_id INT,
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_calendar_course_start (course_id, start_at),
+            INDEX idx_calendar_user_start (created_by, start_at)
+        )
+    `);
+
+    await ensureColumn('assignments', 'status', "ENUM('draft', 'scheduled', 'published', 'closed') DEFAULT 'published'");
+    await ensureColumn('assignments', 'published_at', 'TIMESTAMP NULL');
+    await ensureColumn('assignments', 'scheduled_publish_at', 'TIMESTAMP NULL');
+    await ensureColumn('assignments', 'allow_resubmission', 'BOOLEAN DEFAULT TRUE');
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS assignment_files (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            assignment_id INT NOT NULL,
+            uploaded_by INT NOT NULL,
+            file_name VARCHAR(255) NOT NULL,
+            file_url VARCHAR(500),
+            mime_type VARCHAR(100),
+            size_bytes INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+            FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await ensureColumn('submissions', 'feedback', 'TEXT NULL');
+    await ensureColumn('submissions', 'is_late', 'BOOLEAN DEFAULT FALSE');
+    await ensureColumn('submissions', 'attempt_no', 'INT DEFAULT 1');
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS submission_files (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            submission_id INT NOT NULL,
+            file_name VARCHAR(255) NOT NULL,
+            file_url VARCHAR(500),
+            mime_type VARCHAR(100),
+            size_bytes INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (submission_id) REFERENCES submissions(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS rubrics (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            course_id INT NOT NULL,
+            assignment_id INT NULL,
+            teacher_id INT NOT NULL,
+            title VARCHAR(150) NOT NULL,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE SET NULL,
+            FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS rubric_criteria (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            rubric_id INT NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            max_score DECIMAL(6,2) NOT NULL DEFAULT 10,
+            display_order INT DEFAULT 0,
+            FOREIGN KEY (rubric_id) REFERENCES rubrics(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS gradebook_entries (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            course_id INT NOT NULL,
+            student_id INT NOT NULL,
+            source_type ENUM('assignment', 'quiz', 'attendance', 'internal', 'final') NOT NULL,
+            source_id INT NULL,
+            title VARCHAR(150) NOT NULL,
+            score DECIMAL(8,2) NOT NULL DEFAULT 0,
+            max_score DECIMAL(8,2) NOT NULL DEFAULT 100,
+            weight DECIMAL(6,2) DEFAULT 1,
+            feedback TEXT,
+            graded_by INT,
+            graded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (graded_by) REFERENCES users(id) ON DELETE SET NULL,
+            INDEX idx_gradebook_student_course (student_id, course_id),
+            INDEX idx_gradebook_course_source (course_id, source_type, source_id)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS certificates (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            certificate_uid VARCHAR(80) UNIQUE NOT NULL,
+            user_id INT NOT NULL,
+            course_id INT NULL,
+            issued_by INT NOT NULL,
+            type ENUM('course_completion', 'participation', 'workshop', 'achievement') NOT NULL,
+            title VARCHAR(180) NOT NULL,
+            description TEXT,
+            qr_verification_url VARCHAR(500),
+            issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            metadata JSON,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+            FOREIGN KEY (issued_by) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_certificates_user (user_id, issued_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS discussion_posts (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            course_id INT NOT NULL,
+            author_id INT NOT NULL,
+            type ENUM('question', 'announcement') DEFAULT 'question',
+            title VARCHAR(180) NOT NULL,
+            content TEXT NOT NULL,
+            is_pinned BOOLEAN DEFAULT FALSE,
+            best_reply_id INT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_discussion_course_created (course_id, created_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS discussion_replies (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            post_id INT NOT NULL,
+            author_id INT NOT NULL,
+            content TEXT NOT NULL,
+            likes_count INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (post_id) REFERENCES discussion_posts(id) ON DELETE CASCADE,
+            FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS discussion_likes (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            reply_id INT NOT NULL,
+            user_id INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (reply_id) REFERENCES discussion_replies(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_discussion_like (reply_id, user_id)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS course_progress (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            course_id INT NOT NULL,
+            student_id INT NOT NULL,
+            module_key VARCHAR(120) NOT NULL,
+            lesson_key VARCHAR(120),
+            status ENUM('not_started', 'in_progress', 'completed') DEFAULT 'not_started',
+            progress_percent DECIMAL(5,2) DEFAULT 0,
+            completed_at TIMESTAMP NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_course_progress (course_id, student_id, module_key, lesson_key)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS achievements (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            course_id INT NULL,
+            type VARCHAR(80) NOT NULL,
+            title VARCHAR(150) NOT NULL,
+            description TEXT,
+            xp INT DEFAULT 0,
+            awarded_by INT NULL,
+            awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            metadata JSON,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+            FOREIGN KEY (awarded_by) REFERENCES users(id) ON DELETE SET NULL,
+            INDEX idx_achievements_user (user_id, awarded_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS user_gamification (
+            user_id INT PRIMARY KEY,
+            xp INT DEFAULT 0,
+            daily_streak INT DEFAULT 0,
+            weekly_streak INT DEFAULT 0,
+            last_activity_date DATE NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS personal_notes (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            course_id INT NULL,
+            title VARCHAR(180) NOT NULL,
+            content LONGTEXT NOT NULL,
+            category VARCHAR(100),
+            tags JSON,
+            attachments JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+            INDEX idx_notes_user_updated (user_id, updated_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            target_type ENUM('course', 'assignment', 'quiz', 'ai_response', 'note', 'announcement') NOT NULL,
+            target_id INT NOT NULL,
+            title VARCHAR(180),
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_bookmark (user_id, target_type, target_id),
+            INDEX idx_bookmarks_user_type (user_id, target_type)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS reports (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            course_id INT NULL,
+            type VARCHAR(80) NOT NULL,
+            title VARCHAR(180) NOT NULL,
+            format ENUM('json', 'csv', 'pdf', 'excel') DEFAULT 'json',
+            payload JSON,
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+            INDEX idx_reports_user_type (user_id, type, generated_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS download_events (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            target_type ENUM('assignment', 'pdf', 'note', 'certificate') NOT NULL,
+            target_id INT NOT NULL,
+            action ENUM('viewed', 'downloaded', 'completed') NOT NULL,
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_downloads_user_target (user_id, target_type, target_id)
+        )
+    `);
     console.log('Commercial data schema verified');
 }
 

@@ -1,0 +1,18 @@
+{
+  "short_name": "Study Hero",
+  "name": "Study Hero: Knowledge Quest",
+  "description": "Enterprise learning, quizzes, assignments, and progress tracking.",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#004d99",
+  "background_color": "#ffffff",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

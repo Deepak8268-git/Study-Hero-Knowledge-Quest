@@ -3,6 +3,20 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 
 let ioInstance = null;
+const onlineUsers = new Map();
+
+function publicPresence(userId, status = 'online') {
+    const existing = onlineUsers.get(Number(userId));
+    return {
+        userId: Number(userId),
+        status,
+        lastSeen: existing?.lastSeen || new Date().toISOString()
+    };
+}
+
+function emitPresence(io, userId, status) {
+    io.emit('presence:update', publicPresence(userId, status));
+}
 
 async function authenticateSocket(socket, next) {
     try {
@@ -93,12 +107,38 @@ function initializeSocketServer(httpServer, allowedOrigins) {
     ioInstance.on('connection', async (socket) => {
         try {
             await joinInitialRooms(socket);
+            const currentPresence = onlineUsers.get(socket.user.id) || { sockets: new Set(), lastSeen: new Date().toISOString() };
+            currentPresence.sockets.add(socket.id);
+            currentPresence.lastSeen = new Date().toISOString();
+            onlineUsers.set(socket.user.id, currentPresence);
+            emitPresence(ioInstance, socket.user.id, 'online');
             socket.emit('socket:connected', { userId: socket.user.id, role: socket.user.role });
+            socket.emit('presence:sync', Array.from(onlineUsers.keys()).map((userId) => publicPresence(userId, 'online')));
+
+            socket.on('presence:ping', (callback) => {
+                const presence = onlineUsers.get(socket.user.id);
+                if (presence) presence.lastSeen = new Date().toISOString();
+                if (typeof callback === 'function') callback(publicPresence(socket.user.id, 'online'));
+            });
 
             socket.on('course:join', async ({ courseId }, callback) => {
                 const joined = await joinAuthorizedCourse(socket, courseId);
                 if (typeof callback === 'function') {
                     callback({ ok: joined });
+                }
+            });
+
+            socket.on('disconnect', () => {
+                const presence = onlineUsers.get(socket.user.id);
+                if (!presence) return;
+                presence.sockets.delete(socket.id);
+                presence.lastSeen = new Date().toISOString();
+                if (presence.sockets.size === 0) {
+                    onlineUsers.set(socket.user.id, presence);
+                    emitPresence(ioInstance, socket.user.id, 'offline');
+                    onlineUsers.delete(socket.user.id);
+                } else {
+                    onlineUsers.set(socket.user.id, presence);
                 }
             });
         } catch (error) {
@@ -117,5 +157,6 @@ function getSocketServer() {
 module.exports = {
     initializeSocketServer,
     getSocketServer,
-    joinAuthorizedCourse
+    joinAuthorizedCourse,
+    publicPresence
 };

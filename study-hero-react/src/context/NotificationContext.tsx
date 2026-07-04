@@ -71,9 +71,14 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode; authKey
       window.dispatchEvent(new CustomEvent('studyhero:dashboard-refresh'));
     };
 
+    const handleNewNotification = () => {
+      syncNotifications();
+      refreshDashboard();
+    };
+
     socket.on('connect', syncNotifications);
     socket.on('socket:connected', syncNotifications);
-    socket.on('notification:new', syncNotifications);
+    socket.on('notification:new', handleNewNotification);
     socket.on('notification:read', syncNotifications);
     socket.on('notification:read_all', syncNotifications);
     socket.on('notification:deleted', syncNotifications);
@@ -85,7 +90,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode; authKey
     return () => {
       socket.off('connect', syncNotifications);
       socket.off('socket:connected', syncNotifications);
-      socket.off('notification:new', syncNotifications);
+      socket.off('notification:new', handleNewNotification);
       socket.off('notification:read', syncNotifications);
       socket.off('notification:read_all', syncNotifications);
       socket.off('notification:deleted', syncNotifications);

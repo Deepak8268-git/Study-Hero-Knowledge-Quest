@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import { apiRequest, getAuthToken } from '../services/api';
+import { useNotifications } from '../context/NotificationContext';
 
 interface Course {
   id: number;
@@ -33,9 +34,26 @@ interface ScheduledQuiz {
   source?: string;
 }
 
+interface QuizHistoryItem {
+  id: number;
+  title: string;
+  percentage: number;
+  submittedAt: string;
+  courseName: string;
+}
+
+interface StudentPerformance {
+  averageQuizScore: number;
+  completedAssignments: number;
+  pendingAssignments: number;
+  completedQuizzes: number;
+}
+
 interface StudentDashboardResponse {
   courses: Array<{ id: number; title: string; instructor: string; progress: number }>;
   assignments: Array<{ id: number; title: string; course: string; dueDate: string; completed: boolean | number }>;
+  quizHistory?: QuizHistoryItem[];
+  performance?: StudentPerformance;
   scheduledQuizzes: Array<{
     id: number | string;
     title: string;
@@ -127,6 +145,9 @@ const StudentDashboardPage: React.FC = () => {
   const [quizCodeSuccess, setQuizCodeSuccess] = useState('');
   const [quizCodeError, setQuizCodeError] = useState('');
   const [submittingCode, setSubmittingCode] = useState(false);
+  const [quizHistory, setQuizHistory] = useState<QuizHistoryItem[]>([]);
+  const [performance, setPerformance] = useState<StudentPerformance | null>(null);
+  const { notifications, unreadCount, refreshNotifications, markRead } = useNotifications();
   
   const mapQuiz = (quiz: StudentDashboardResponse['scheduledQuizzes'][number] | QuizLookupResponse): ScheduledQuiz => {
     const code = 'quizCode' in quiz && quiz.quizCode
@@ -170,6 +191,9 @@ const StudentDashboardPage: React.FC = () => {
       })));
 
       setScheduledQuizzes(data.scheduledQuizzes.map(mapQuiz));
+      setQuizHistory(data.quizHistory || []);
+      setPerformance(data.performance || null);
+      await refreshNotifications();
       setDashboardError('');
     } catch (error: any) {
       console.error('Student dashboard load error:', error);
@@ -194,7 +218,7 @@ const StudentDashboardPage: React.FC = () => {
 
     window.addEventListener('studyhero:dashboard-refresh', handleDashboardRefresh);
     return () => window.removeEventListener('studyhero:dashboard-refresh', handleDashboardRefresh);
-  }, [navigate]);
+  }, [navigate, refreshNotifications]);
   
   const handleSubmitQuizCode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -339,6 +363,40 @@ const StudentDashboardPage: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="bg-white border border-gray-100 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-800 mb-3">Learning Progress</h3>
+                <div className="space-y-3">
+                  {courses.slice(0, 5).map((course) => (
+                    <div key={course.id}>
+                      <div className="flex justify-between text-xs text-gray-500 mb-1"><span>{course.title}</span><span>{course.progress}%</span></div>
+                      <div className="h-2 bg-gray-100 rounded-full"><div className="h-2 bg-primary rounded-full" style={{ width: `${course.progress}%` }}></div></div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-white border border-gray-100 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-800 mb-3">Performance</h3>
+                <div className="grid grid-cols-2 gap-3 text-center">
+                  <div className="bg-success/10 rounded-lg p-3"><p className="text-2xl font-bold text-success">{performance?.averageQuizScore || 0}%</p><p className="text-xs text-gray-500">Avg Quiz</p></div>
+                  <div className="bg-primary/10 rounded-lg p-3"><p className="text-2xl font-bold text-primary">{performance?.completedQuizzes || quizHistory.length}</p><p className="text-xs text-gray-500">Quizzes</p></div>
+                </div>
+              </div>
+              <div className="bg-white border border-gray-100 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-800 mb-3">Recent Scores</h3>
+                {quizHistory.length === 0 ? <p className="text-sm text-gray-500">No quiz history yet.</p> : (
+                  <div className="space-y-2">
+                    {quizHistory.slice(0, 4).map((attempt) => (
+                      <div key={attempt.id} className="flex items-center justify-between text-sm">
+                        <span className="truncate text-gray-700">{attempt.title}</span>
+                        <span className="font-semibold text-primary">{Number(attempt.percentage || 0)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
           
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -347,9 +405,9 @@ const StudentDashboardPage: React.FC = () => {
               <div className="mb-10">
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="text-xl font-bold text-gray-800">Your Courses</h2>
-                  <Link to="#" className="text-primary hover:text-secondary text-sm font-medium">
-                    View All Courses
-                  </Link>
+                  <button type="button" onClick={loadDashboard} className="text-primary hover:text-secondary text-sm font-medium">
+                    Refresh Courses
+                  </button>
                 </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -398,9 +456,9 @@ const StudentDashboardPage: React.FC = () => {
               <div className="mb-10">
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="text-xl font-bold text-gray-800">Upcoming Quizzes</h2>
-                  <Link to="#" className="text-primary hover:text-secondary text-sm font-medium">
-                    View All Quizzes
-                  </Link>
+                  <button type="button" onClick={loadDashboard} className="text-primary hover:text-secondary text-sm font-medium">
+                    Refresh Quizzes
+                  </button>
                 </div>
                 
                 {scheduledQuizzes.length === 0 ? (
@@ -420,6 +478,25 @@ const StudentDashboardPage: React.FC = () => {
             
             {/* Sidebar - Assignments */}
             <div>
+              <div className="bg-white rounded-xl shadow-md p-6 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold text-gray-800">Notifications</h2>
+                  <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full">{unreadCount} unread</span>
+                </div>
+                {notifications.length === 0 ? (
+                  <p className="text-sm text-gray-500">No notifications yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {notifications.slice(0, 4).map((notification) => (
+                      <button key={notification.id} type="button" onClick={() => markRead(notification.id)} className={`w-full text-left border rounded-md p-3 ${notification.readAt ? 'border-gray-100 bg-white' : 'border-primary/20 bg-primary/5'}`}>
+                        <p className="text-sm font-medium text-gray-800">{notification.title}</p>
+                        <p className="text-xs text-gray-500 mt-1 line-clamp-2">{notification.message}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="bg-white rounded-xl shadow-md p-6">
                 <h2 className="text-xl font-bold text-gray-800 mb-4">Upcoming Assignments</h2>
                 

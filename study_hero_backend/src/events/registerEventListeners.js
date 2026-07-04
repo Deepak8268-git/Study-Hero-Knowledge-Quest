@@ -260,7 +260,9 @@ function registerActivityListeners(eventBus) {
         EVENTS.ASSIGNMENT_GRADED,
         EVENTS.COURSE_CREATED,
         EVENTS.COURSE_UPDATED,
-        EVENTS.ANNOUNCEMENT_CREATED
+        EVENTS.ANNOUNCEMENT_CREATED,
+        EVENTS.AI_OPERATION_COMPLETED,
+        EVENTS.LMS_OPERATION_COMPLETED
     ]);
 
     onEvent(eventBus, '*', async ({ payload, name }) => {
