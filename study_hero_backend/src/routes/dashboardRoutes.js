@@ -41,9 +41,11 @@ router.get('/teacher', authMiddleware, teacherMiddleware, async (req, res) => {
         const [assignments] = await db.query(`
             SELECT
                 a.id,
+                a.course_id,
                 a.title,
                 a.description,
                 a.due_date,
+                a.status,
                 c.title AS course,
                 COUNT(DISTINCT s.id) AS submissions,
                 COUNT(DISTINCT e.student_id) AS totalStudents
@@ -134,6 +136,7 @@ router.get('/student', authMiddleware, async (req, res) => {
         const [assignments] = await db.query(`
             SELECT
                 a.id,
+                a.course_id,
                 a.title,
                 c.title AS course,
                 a.due_date AS dueDate,
@@ -215,5 +218,7 @@ router.get('/student', authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+
+
 
 

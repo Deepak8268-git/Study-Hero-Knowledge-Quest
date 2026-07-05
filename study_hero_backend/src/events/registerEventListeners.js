@@ -207,6 +207,10 @@ function registerSocketOnlyListeners(eventBus) {
     onEvent(eventBus, EVENTS.COURSE_CREATED, async ({ actorId, courseId }) => {
         emitToTeacher(actorId, 'dashboard:refresh', { reason: EVENTS.COURSE_CREATED, courseId });
     });
+
+    onEvent(eventBus, EVENTS.AI_OPERATION_COMPLETED, async ({ userId, actorId, courseId, entityId }) => {
+        emitToUser(userId || actorId, 'dashboard:refresh', { reason: EVENTS.AI_OPERATION_COMPLETED, courseId, entityId });
+    });
 }
 
 function registerEmailListeners(eventBus) {
@@ -288,3 +292,4 @@ function registerEventListeners(eventBus) {
 }
 
 module.exports = registerEventListeners;
+

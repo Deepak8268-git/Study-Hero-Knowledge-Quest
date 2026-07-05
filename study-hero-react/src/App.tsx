@@ -28,6 +28,8 @@ import ChangePasswordPage from './pages/ChangePasswordPage';
 import SettingsPage from './pages/SettingsPage';
 import AiLearningPage from './pages/AiLearningPage';
 import LmsPage from './pages/LmsPage';
+import AnalyticsPage from './pages/AnalyticsPage';
+import OAuthCallbackPage from './pages/OAuthCallbackPage';
 
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) => {
   const [isChecking, setIsChecking] = useState(true);
@@ -93,6 +95,7 @@ const AppRoutes: React.FC = () => (
     <Route path="/forgot-password" element={<ForgotPasswordPage />} />
     <Route path="/reset-password" element={<ResetPasswordPage />} />
     <Route path="/verify-email" element={<VerifyEmailPage />} />
+    <Route path="/oauth/callback" element={<OAuthCallbackPage />} />
     <Route path="/about" element={<AboutPage />} />
     <Route path="/features" element={<FeaturesPage />} />
     <Route path="/dashboard" element={<DashboardPage />} />
@@ -103,6 +106,7 @@ const AppRoutes: React.FC = () => (
     <Route path="/assignment/:assignmentId/review" element={<ProtectedRoute allowedRoles={['teacher']}><AssignmentPage /></ProtectedRoute>} />
     <Route path="/ai-learning" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><AiLearningPage /></ProtectedRoute>} />
     <Route path="/lms" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><LmsPage /></ProtectedRoute>} />
+    <Route path="/analytics" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><AnalyticsPage /></ProtectedRoute>} />
     <Route path="/settings" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><SettingsPage /></ProtectedRoute>} />
     <Route path="/change-password" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><ChangePasswordPage /></ProtectedRoute>} />
     <Route path="/quiz" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><QuizPage /></ProtectedRoute>} />
@@ -151,5 +155,7 @@ declare global {
 }
 
 export default App;
+
+
 
 

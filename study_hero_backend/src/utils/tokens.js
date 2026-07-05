@@ -6,7 +6,9 @@ function getAccessTokenTtl() {
 }
 
 function getRefreshTokenDays(rememberMe = false) {
-    const value = rememberMe ? process.env.REFRESH_TOKEN_REMEMBER_DAYS : process.env.REFRESH_TOKEN_DAYS;
+    const value = rememberMe
+        ? (process.env.REFRESH_TOKEN_REMEMBER_DAYS || process.env.REMEMBER_ME_REFRESH_TOKEN_DAYS)
+        : process.env.REFRESH_TOKEN_DAYS;
     return Number(value || (rememberMe ? 30 : 7));
 }
 
@@ -55,7 +57,7 @@ function getRefreshCookieOptions(expiresAt) {
     return {
         httpOnly: true,
         secure: process.env.REFRESH_COOKIE_SECURE ? process.env.REFRESH_COOKIE_SECURE === 'true' : isProduction,
-        sameSite: process.env.REFRESH_COOKIE_SAMESITE || (isProduction ? 'none' : 'lax'),
+        sameSite: process.env.REFRESH_COOKIE_SAMESITE || process.env.REFRESH_COOKIE_SAME_SITE || (isProduction ? 'none' : 'lax'),
         expires: expiresAt,
         path: '/api/auth'
     };

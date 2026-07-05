@@ -46,12 +46,15 @@ function parseGenerationOptions(input = {}) {
 
     const requestedCount = Number(input.questionCount || input.question_count || 5);
     const marksPerQuestion = Number(input.marksPerQuestion || input.marks_per_question || 1);
+    const timeLimit = Number(input.timeLimit || input.time_limit || input.timer || input.duration || 20);
     return {
         questionCount: Number.isFinite(requestedCount) ? Math.min(Math.max(Math.round(requestedCount), 1), 50) : 5,
         difficulty: String(input.difficulty || 'Medium'),
         questionTypes: questionTypes.length ? questionTypes : ['MCQ'],
         marksPerQuestion: Number.isFinite(marksPerQuestion) ? Math.max(marksPerQuestion, 1) : 1,
-        bloomLevel: String(input.bloomLevel || input.bloom_level || 'Understand')
+        bloomLevel: String(input.bloomLevel || input.bloom_level || 'Understand'),
+        timeLimit: Number.isFinite(timeLimit) ? Math.min(Math.max(Math.round(timeLimit), 5), 180) : 20,
+        language: String(input.language || 'English')
     };
 }
 
@@ -62,6 +65,8 @@ function buildGenerationPrompt(options, sourceLabel) {
         `Question types to include: ${options.questionTypes.join(', ')}.`,
         `Marks per question: ${options.marksPerQuestion}.`,
         `Bloom taxonomy level: ${options.bloomLevel}.`,
+        `Quiz timer: ${options.timeLimit} minutes.`,
+        `Language: ${options.language}.`,
         'Return only parsable quiz content using this exact structure for every question:',
         'Q1. Question text',
         'A) Option or answer choice',
@@ -895,6 +900,10 @@ router.post('/:id/duplicate', authMiddleware, teacherMiddleware, async (req, res
     }
 });
 module.exports = router;
+
+
+
+
 
 
 

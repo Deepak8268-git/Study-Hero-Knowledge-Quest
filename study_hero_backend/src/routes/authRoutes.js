@@ -1,4 +1,6 @@
 const express = require('express');
+const axios = require('axios');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { z } = require('zod');
 const db = require('../config/db');
@@ -503,4 +505,201 @@ router.post('/resend-verification', verificationLimiter, validateRequest(emailSc
     }
 });
 
+function getPublicBackendUrl(req) {
+    return process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+}
+
+function getFrontendUrl() {
+    return process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:3000';
+}
+
+function getOAuthConfig(provider, req) {
+    const callbackBase = getPublicBackendUrl(req);
+    const configs = {
+        google: {
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            callbackUrl: process.env.GOOGLE_CALLBACK_URL || `${callbackBase}/api/auth/oauth/google/callback`,
+            authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+            tokenUrl: 'https://oauth2.googleapis.com/token',
+            userInfoUrl: 'https://www.googleapis.com/oauth2/v3/userinfo',
+            scope: 'openid email profile'
+        },
+        facebook: {
+            clientId: process.env.FACEBOOK_APP_ID,
+            clientSecret: process.env.FACEBOOK_APP_SECRET,
+            callbackUrl: process.env.FACEBOOK_CALLBACK_URL || `${callbackBase}/api/auth/oauth/facebook/callback`,
+            authorizeUrl: 'https://www.facebook.com/v19.0/dialog/oauth',
+            tokenUrl: 'https://graph.facebook.com/v19.0/oauth/access_token',
+            userInfoUrl: 'https://graph.facebook.com/me?fields=id,name,email',
+            scope: 'email,public_profile'
+        }
+    };
+
+    return configs[provider];
+}
+
+function signOAuthState(payload) {
+    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signature = crypto.createHmac('sha256', process.env.JWT_SECRET || '').update(body).digest('base64url');
+    return `${body}.${signature}`;
+}
+
+function readOAuthState(state) {
+    if (!state || !process.env.JWT_SECRET) return null;
+    const [body, signature] = String(state).split('.');
+    if (!body || !signature) return null;
+    const expected = crypto.createHmac('sha256', process.env.JWT_SECRET).update(body).digest('base64url');
+    if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+    const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!parsed.exp || parsed.exp < Date.now()) return null;
+    return parsed;
+}
+
+function redirectOAuthError(res, message) {
+    const target = `${getFrontendUrl()}/oauth/callback#error=${encodeURIComponent(message)}`;
+    return res.redirect(target);
+}
+
+function normalizeOAuthProfile(provider, data) {
+    if (provider === 'google') {
+        return {
+            email: data.email,
+            username: data.name || data.email?.split('@')[0],
+            providerId: data.sub
+        };
+    }
+
+    return {
+        email: data.email,
+        username: data.name || data.email?.split('@')[0],
+        providerId: data.id
+    };
+}
+
+async function uniqueOAuthUsername(baseName) {
+    const normalized = String(baseName || 'studyhero-user').trim().replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80) || 'studyhero-user';
+    let candidate = normalized;
+    let suffix = 0;
+
+    while (true) {
+        const [existing] = await db.query('SELECT id FROM users WHERE username = ?', [candidate]);
+        if (existing.length === 0) return candidate;
+        suffix += 1;
+        candidate = `${normalized.slice(0, 70)}-${suffix}`;
+    }
+}
+
+async function findOrCreateOAuthUser({ provider, profile, role }) {
+    const email = String(profile.email || '').toLowerCase();
+    if (!email) {
+        const error = new Error(`${provider} account did not provide an email address`);
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const [existing] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+    if (existing.length > 0) {
+        return { user: existing[0], created: false };
+    }
+
+    const username = await uniqueOAuthUsername(profile.username || email.split('@')[0]);
+    const randomPassword = await bcrypt.hash(generateOpaqueToken(), 12);
+    const selectedRole = role === 'teacher' ? 'teacher' : 'student';
+    const [result] = await db.query(`
+        INSERT INTO users (username, email, password, role, email_verified, email_verified_at, password_changed_at)
+        VALUES (?, ?, ?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [username, email, randomPassword, selectedRole]);
+
+    const [users] = await db.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
+    return { user: users[0], created: true };
+}
+
+router.get('/oauth/:provider/start', async (req, res) => {
+    try {
+        const provider = String(req.params.provider || '').toLowerCase();
+        const config = getOAuthConfig(provider, req);
+        if (!config) return res.status(404).json({ error: 'OAuth provider not supported' });
+        if (!config.clientId || !config.clientSecret) {
+            return res.status(501).json({ error: `${provider} OAuth is not configured` });
+        }
+
+        const role = req.query.role === 'teacher' ? 'teacher' : 'student';
+        const state = signOAuthState({ role, provider, exp: Date.now() + 10 * 60 * 1000, nonce: generateOpaqueToken() });
+        const params = new URLSearchParams({
+            client_id: config.clientId,
+            redirect_uri: config.callbackUrl,
+            response_type: 'code',
+            scope: config.scope,
+            state
+        });
+
+        res.redirect(`${config.authorizeUrl}?${params.toString()}`);
+    } catch (error) {
+        console.error('OAuth start error:', error.message);
+        res.status(500).json({ error: 'Unable to start OAuth sign in' });
+    }
+});
+
+router.get('/oauth/:provider/callback', async (req, res) => {
+    try {
+        const provider = String(req.params.provider || '').toLowerCase();
+        const config = getOAuthConfig(provider, req);
+        if (!config) return redirectOAuthError(res, 'OAuth provider not supported');
+        if (req.query.error) return redirectOAuthError(res, String(req.query.error));
+
+        const state = readOAuthState(req.query.state);
+        if (!state || state.provider !== provider) return redirectOAuthError(res, 'Invalid OAuth state');
+        if (!req.query.code) return redirectOAuthError(res, 'Missing OAuth authorization code');
+
+        let tokenResponse;
+        if (provider === 'google') {
+            tokenResponse = await axios.post(config.tokenUrl, new URLSearchParams({
+                client_id: config.clientId,
+                client_secret: config.clientSecret,
+                code: String(req.query.code),
+                grant_type: 'authorization_code',
+                redirect_uri: config.callbackUrl
+            }), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        } else {
+            tokenResponse = await axios.get(config.tokenUrl, {
+                params: {
+                    client_id: config.clientId,
+                    client_secret: config.clientSecret,
+                    code: String(req.query.code),
+                    redirect_uri: config.callbackUrl
+                }
+            });
+        }
+
+        const accessToken = tokenResponse.data.access_token;
+        if (!accessToken) return redirectOAuthError(res, 'OAuth access token was not returned');
+
+        const userInfoResponse = await axios.get(config.userInfoUrl, {
+            headers: provider === 'google' ? { Authorization: `Bearer ${accessToken}` } : undefined,
+            params: provider === 'facebook' ? { access_token: accessToken } : undefined
+        });
+
+        const profile = normalizeOAuthProfile(provider, userInfoResponse.data);
+        const { user, created } = await findOrCreateOAuthUser({ provider, profile, role: state.role });
+        await db.query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login_at = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+        const appAccessToken = signAccessToken(user);
+        await createSession({ user, rememberMe: true, req, res });
+        eventBus.emitDomain(EVENTS.SECURITY_LOGIN, {
+            userId: user.id,
+            actorId: user.id,
+            entityType: 'user',
+            entityId: user.id,
+            auditMetadata: { provider, oauth: true, created },
+            ...getClientInfo(req)
+        });
+
+        const redirectUrl = `${getFrontendUrl()}/oauth/callback#token=${encodeURIComponent(appAccessToken)}&role=${encodeURIComponent(user.role)}`;
+        res.redirect(redirectUrl);
+    } catch (error) {
+        console.error('OAuth callback error:', error.response?.data || error.message);
+        redirectOAuthError(res, 'OAuth sign in failed');
+    }
+});
 module.exports = router;
+

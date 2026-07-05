@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
-import { getAuthToken, register } from '../services/api';
+import { API_BASE_URL, getAuthToken, register } from '../services/api';
 
 const SignupPage: React.FC = () => {
   const [fullName, setFullName] = useState('');
@@ -21,6 +21,8 @@ const SignupPage: React.FC = () => {
       navigate('/dashboard');
     }
   }, [navigate]);
+
+  const oauthUrl = (provider: 'google' | 'facebook') => `${API_BASE_URL || ''}/api/auth/oauth/${provider}/start?role=${userType}`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -222,9 +224,9 @@ const SignupPage: React.FC = () => {
               />
               <label htmlFor="agree-terms" className="ml-2 block text-sm text-gray-900">
                 I agree to the{' '}
-                <a href="#" className="text-primary hover:text-secondary">
+                <Link to="/about" className="text-primary hover:text-secondary">
                   Terms and Conditions
-                </a>
+                </Link>
               </label>
             </div>
 
@@ -264,7 +266,8 @@ const SignupPage: React.FC = () => {
             <div className="mt-6 grid grid-cols-2 gap-3">
               <div>
                 <a
-                  href="#"
+                  href={oauthUrl('google')}
+                  aria-label="Sign up with Google"
                   className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
                 >
                   <i className="ri-google-fill text-lg"></i>
@@ -272,7 +275,8 @@ const SignupPage: React.FC = () => {
               </div>
               <div>
                 <a
-                  href="#"
+                  href={oauthUrl('facebook')}
+                  aria-label="Sign up with Facebook"
                   className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
                 >
                   <i className="ri-facebook-fill text-lg"></i>
@@ -289,3 +293,8 @@ const SignupPage: React.FC = () => {
 };
 
 export default SignupPage; 
+
+
+
+
+

@@ -51,6 +51,8 @@ const FileUploader: React.FC<FileUploaderProps> = ({ courses = [], onQuizGenerat
   const [questionTypes, setQuestionTypes] = useState<string[]>(['MCQ']);
   const [marksPerQuestion, setMarksPerQuestion] = useState<number>(1);
   const [bloomLevel, setBloomLevel] = useState<string>('Understand');
+  const [timeLimit, setTimeLimit] = useState<number>(20);
+  const [language, setLanguage] = useState<string>('English');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -66,7 +68,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({ courses = [], onQuizGenerat
       difficulty,
       questionTypes: questionTypes.length > 0 ? questionTypes : ['MCQ'],
       marksPerQuestion: Math.max(Number(marksPerQuestion) || 1, 1),
-      bloomLevel
+      bloomLevel,
+      timeLimit: Math.min(Math.max(Number(timeLimit) || 20, 5), 180),
+      language
     };
   };
 
@@ -74,7 +78,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ courses = [], onQuizGenerat
     setQuestionTypes((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type]);
   };
 
-  const mergedSettings = () => ({ ...defaultSettings, generationOptions: getGenerationOptions() });
+  const mergedSettings = () => ({ ...defaultSettings, timeLimit, generationOptions: getGenerationOptions() });
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -122,6 +126,8 @@ const FileUploader: React.FC<FileUploaderProps> = ({ courses = [], onQuizGenerat
       formData.append('questionTypes', JSON.stringify(generationOptions.questionTypes));
       formData.append('marksPerQuestion', String(generationOptions.marksPerQuestion));
       formData.append('bloomLevel', generationOptions.bloomLevel);
+      formData.append('timeLimit', String(generationOptions.timeLimit));
+      formData.append('language', generationOptions.language);
 
       setUploadProgress(50);
       setMlStatus('Extracting PDF text and generating quiz...');
@@ -267,7 +273,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ courses = [], onQuizGenerat
                 <div>
                   <label htmlFor="questionCount" className="block text-sm font-medium text-gray-700 mb-1">Number of Questions</label>
                   <select id="questionCount" value={questionPreset} onChange={(e) => setQuestionPreset(e.target.value)} className="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
-                    {['5', '10', '15', '20', '25', 'Custom'].map((count) => <option key={count} value={count}>{count}</option>)}
+                    {['5', '10', '15', '20', '25', '30', 'Custom'].map((count) => <option key={count} value={count}>{count}</option>)}
                   </select>
                 </div>
                 {questionPreset === 'Custom' && (
@@ -292,12 +298,22 @@ const FileUploader: React.FC<FileUploaderProps> = ({ courses = [], onQuizGenerat
                     {['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'].map((level) => <option key={level} value={level}>{level}</option>)}
                   </select>
                 </div>
+                <div>
+                  <label htmlFor="timeLimit" className="block text-sm font-medium text-gray-700 mb-1">Timer (minutes)</label>
+                  <input id="timeLimit" type="number" min="5" max="180" value={timeLimit} onChange={(e) => setTimeLimit(Number(e.target.value))} className="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md" />
+                </div>
+                <div>
+                  <label htmlFor="language" className="block text-sm font-medium text-gray-700 mb-1">Language</label>
+                  <select id="language" value={language} onChange={(e) => setLanguage(e.target.value)} className="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md">
+                    {['English', 'Hindi', 'Spanish', 'French', 'German'].map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </div>
               </div>
 
               <div className="mb-6">
                 <span className="block text-sm font-medium text-gray-700 mb-2">Question Types</span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {['MCQ', 'True/False', 'Fill in blanks', 'Short Answer'].map((type) => (
+                  {['MCQ', 'True/False', 'Fill in blanks', 'Short Answer', 'Mixed'].map((type) => (
                     <label key={type} className="flex items-center gap-2 text-sm text-gray-700 border border-gray-200 rounded-md px-3 py-2">
                       <input type="checkbox" checked={questionTypes.includes(type)} onChange={() => toggleQuestionType(type)} />
                       {type}
@@ -370,5 +386,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ courses = [], onQuizGenerat
 };
 
 export default FileUploader;
+
+
 
 

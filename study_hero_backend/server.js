@@ -57,6 +57,7 @@ const notificationRoutes = require('./src/routes/notificationRoutes');
 const announcementRoutes = require('./src/routes/announcementRoutes');
 const aiRoutes = require('./src/routes/aiRoutes');
 const lmsRoutes = require('./src/routes/lmsRoutes');
+const analyticsRoutes = require('./src/routes/analyticsRoutes');
 app.use('/api/quiz', quizRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
@@ -71,6 +72,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/lms', lmsRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 app.get('/api/health', (req, res) => {
     res.json({
@@ -125,6 +127,8 @@ async function startServer() {
             console.log('- POST /api/announcements');
             console.log('- POST /api/ai/assistant/chat');
             console.log('- GET /api/lms/timetable');
+            console.log('- GET /api/analytics/teacher');
+            console.log('- GET /api/analytics/student');
         });
     } catch (error) {
         console.error('Failed to start server:', error);
@@ -133,3 +137,4 @@ async function startServer() {
 }
 
 startServer();
+

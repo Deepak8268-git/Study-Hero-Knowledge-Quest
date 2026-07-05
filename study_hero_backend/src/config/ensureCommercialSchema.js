@@ -7,6 +7,13 @@ async function ensureColumn(tableName, columnName, definition) {
     }
 }
 
+async function ensureIndex(tableName, indexName, definition) {
+    const [indexes] = await db.query(`SHOW INDEX FROM ${tableName} WHERE Key_name = ?`, [indexName]);
+    if (indexes.length === 0) {
+        await db.query(`ALTER TABLE ${tableName} ADD INDEX ${indexName} ${definition}`);
+    }
+}
+
 async function ensureCommercialSchema() {
     await db.query(`
         CREATE TABLE IF NOT EXISTS users (
@@ -802,6 +809,14 @@ async function ensureCommercialSchema() {
             INDEX idx_downloads_user_target (user_id, target_type, target_id)
         )
     `);
+    await ensureIndex('quiz_attempts', 'idx_quiz_attempts_student_status_submitted', '(student_id, status, submitted_at)');
+    await ensureIndex('quiz_attempts', 'idx_quiz_attempts_quiz_status_submitted', '(quiz_id, status, submitted_at)');
+    await ensureIndex('submissions', 'idx_submissions_student_submitted', '(student_id, submitted_at)');
+    await ensureIndex('submissions', 'idx_submissions_assignment_status', '(assignment_no, status)');
+    await ensureIndex('activity_events', 'idx_activity_course_created', '(course_id, created_at)');
+    await ensureIndex('activity_events', 'idx_activity_actor_target_created', '(actor_id, target_user_id, created_at)');
+    await ensureIndex('enrollments', 'idx_enrollments_course_status', '(course_id, status)');
+    await ensureIndex('ai_usage_logs', 'idx_ai_usage_user_feature_created', '(user_id, feature, created_at)');
     console.log('Commercial data schema verified');
 }
 
