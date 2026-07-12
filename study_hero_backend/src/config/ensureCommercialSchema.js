@@ -16,12 +16,153 @@ async function ensureIndex(tableName, indexName, definition) {
 
 async function ensureCommercialSchema() {
     await db.query(`
+        CREATE TABLE IF NOT EXISTS institutes (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            name VARCHAR(180) NOT NULL,
+            code VARCHAR(80) UNIQUE,
+            type ENUM('school', 'college', 'university', 'academy', 'training_center', 'other') DEFAULT 'other',
+            email VARCHAR(150),
+            phone VARCHAR(40),
+            website VARCHAR(255),
+            address TEXT,
+            city VARCHAR(100),
+            state VARCHAR(100),
+            country VARCHAR(100),
+            timezone VARCHAR(80),
+            status ENUM('active', 'inactive') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_institutes_status_name (status, name)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS departments (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            institute_id INT NOT NULL,
+            name VARCHAR(150) NOT NULL,
+            code VARCHAR(80),
+            description TEXT,
+            status ENUM('active', 'inactive') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_department_code (institute_id, code),
+            INDEX idx_departments_institute_status (institute_id, status)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS academic_years (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            institute_id INT NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            start_date DATE,
+            end_date DATE,
+            is_current BOOLEAN DEFAULT FALSE,
+            status ENUM('active', 'archived') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_academic_year_name (institute_id, name),
+            INDEX idx_academic_years_current (institute_id, is_current, status)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS programs (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            institute_id INT NOT NULL,
+            department_id INT,
+            name VARCHAR(150) NOT NULL,
+            code VARCHAR(80),
+            level VARCHAR(80),
+            duration_months INT,
+            status ENUM('active', 'inactive') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE,
+            FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
+            UNIQUE KEY unique_program_code (institute_id, code),
+            INDEX idx_programs_institute_department (institute_id, department_id)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS semesters (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            institute_id INT NOT NULL,
+            academic_year_id INT,
+            program_id INT,
+            name VARCHAR(100) NOT NULL,
+            sequence_no INT DEFAULT 1,
+            start_date DATE,
+            end_date DATE,
+            status ENUM('active', 'archived') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE,
+            FOREIGN KEY (academic_year_id) REFERENCES academic_years(id) ON DELETE SET NULL,
+            FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE SET NULL,
+            INDEX idx_semesters_scope (institute_id, academic_year_id, program_id, status)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS batches (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            institute_id INT NOT NULL,
+            program_id INT,
+            academic_year_id INT,
+            name VARCHAR(120) NOT NULL,
+            code VARCHAR(80),
+            start_year INT,
+            end_year INT,
+            status ENUM('active', 'completed', 'archived') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE,
+            FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE SET NULL,
+            FOREIGN KEY (academic_year_id) REFERENCES academic_years(id) ON DELETE SET NULL,
+            UNIQUE KEY unique_batch_code (institute_id, code),
+            INDEX idx_batches_scope (institute_id, program_id, academic_year_id, status)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS subjects (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            institute_id INT NOT NULL,
+            department_id INT,
+            program_id INT,
+            semester_id INT,
+            name VARCHAR(150) NOT NULL,
+            code VARCHAR(80),
+            description TEXT,
+            credits DECIMAL(4,2),
+            status ENUM('active', 'inactive') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE,
+            FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
+            FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE SET NULL,
+            FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE SET NULL,
+            UNIQUE KEY unique_subject_code (institute_id, code),
+            INDEX idx_subjects_scope (institute_id, department_id, program_id, semester_id, status)
+        )
+    `);
+    await db.query(`
         CREATE TABLE IF NOT EXISTS users (
             id INT PRIMARY KEY AUTO_INCREMENT,
             username VARCHAR(50) UNIQUE NOT NULL,
             email VARCHAR(100) UNIQUE NOT NULL,
             password VARCHAR(255) NOT NULL,
             role ENUM('student', 'teacher', 'admin') NOT NULL DEFAULT 'student',
+            institute_id INT,
+            department_id INT,
+            program_id INT,
+            semester_id INT,
+            batch_id INT,
             specialization VARCHAR(100),
             qualification VARCHAR(255),
             experience_years INT,
@@ -37,6 +178,11 @@ async function ensureCommercialSchema() {
     `);
 
     await ensureColumn('users', 'role', "ENUM('student', 'teacher', 'admin') NOT NULL DEFAULT 'student'");
+    await ensureColumn('users', 'institute_id', 'INT NULL');
+    await ensureColumn('users', 'department_id', 'INT NULL');
+    await ensureColumn('users', 'program_id', 'INT NULL');
+    await ensureColumn('users', 'semester_id', 'INT NULL');
+    await ensureColumn('users', 'batch_id', 'INT NULL');
     await ensureColumn('users', 'specialization', 'VARCHAR(100) NULL');
     await ensureColumn('users', 'qualification', 'VARCHAR(255) NULL');
     await ensureColumn('users', 'experience_years', 'INT NULL');
@@ -55,6 +201,8 @@ async function ensureCommercialSchema() {
     await ensureColumn('users', 'failed_login_attempts', 'INT DEFAULT 0');
     await ensureColumn('users', 'locked_until', 'TIMESTAMP NULL');
     await ensureColumn('users', 'verification_sent_at', 'TIMESTAMP NULL');
+    await ensureIndex('users', 'idx_users_institute_role', '(institute_id, role)');
+    await ensureIndex('users', 'idx_users_academic_scope', '(institute_id, department_id, program_id, semester_id, batch_id)');
 
     await db.query(`
         CREATE TABLE IF NOT EXISTS user_sessions (
@@ -115,16 +263,46 @@ async function ensureCommercialSchema() {
             id INT PRIMARY KEY AUTO_INCREMENT,
             title VARCHAR(100) NOT NULL,
             description TEXT,
+            institute_id INT,
+            department_id INT,
+            academic_year_id INT,
+            program_id INT,
+            semester_id INT,
+            batch_id INT,
+            subject_id INT,
             teacher_id INT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE SET NULL,
+            FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
+            FOREIGN KEY (academic_year_id) REFERENCES academic_years(id) ON DELETE SET NULL,
+            FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE SET NULL,
+            FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE SET NULL,
+            FOREIGN KEY (batch_id) REFERENCES batches(id) ON DELETE SET NULL,
+            FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE SET NULL,
             FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE SET NULL
         )
     `);
 
+    await ensureColumn('courses', 'institute_id', 'INT NULL');
+    await ensureColumn('courses', 'department_id', 'INT NULL');
+    await ensureColumn('courses', 'academic_year_id', 'INT NULL');
+    await ensureColumn('courses', 'program_id', 'INT NULL');
+    await ensureColumn('courses', 'semester_id', 'INT NULL');
+    await ensureColumn('courses', 'batch_id', 'INT NULL');
+    await ensureColumn('courses', 'subject_id', 'INT NULL');
     await ensureColumn('courses', 'teacher_id', 'INT NULL');
     await ensureColumn('courses', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
     await ensureColumn('courses', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+    await ensureIndex('courses', 'idx_courses_institute_teacher', '(institute_id, teacher_id)');
+    await ensureIndex('courses', 'idx_courses_academic_scope', '(institute_id, department_id, program_id, semester_id, batch_id, subject_id)');
+
+    await db.query(`
+        UPDATE courses c
+        JOIN users u ON u.id = c.teacher_id
+        SET c.institute_id = u.institute_id
+        WHERE c.institute_id IS NULL AND u.institute_id IS NOT NULL
+    `);
 
     await db.query(`
         CREATE TABLE IF NOT EXISTS enrollments (

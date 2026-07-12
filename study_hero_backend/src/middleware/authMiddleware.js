@@ -21,7 +21,7 @@ const authMiddleware = async (req, res, next) => {
         }
         
         // Verify user still exists
-        const [users] = await db.query('SELECT id, role, password_changed_at FROM users WHERE id = ?', [userId]);
+        const [users] = await db.query('SELECT id, role, institute_id, department_id, program_id, semester_id, batch_id, password_changed_at FROM users WHERE id = ?', [userId]);
         if (users.length === 0) {
             return res.status(401).json({ error: 'User not found' });
         }
@@ -33,7 +33,12 @@ const authMiddleware = async (req, res, next) => {
 
         req.user = {
             id: users[0].id,
-            role: users[0].role
+            role: users[0].role,
+            instituteId: users[0].institute_id || null,
+            departmentId: users[0].department_id || null,
+            programId: users[0].program_id || null,
+            semesterId: users[0].semester_id || null,
+            batchId: users[0].batch_id || null
         };
         
         next();

@@ -25,7 +25,12 @@ function publicUser(user) {
         username: user.username,
         email: user.email,
         role: user.role,
-        emailVerified: !!user.email_verified
+        emailVerified: !!user.email_verified,
+        instituteId: user.institute_id || null,
+        departmentId: user.department_id || null,
+        programId: user.program_id || null,
+        semesterId: user.semester_id || null,
+        batchId: user.batch_id || null
     };
 }
 
@@ -94,7 +99,12 @@ router.post('/register', async (req, res) => {
             enrollment_number,
             department,
             semester,
-            batch
+            batch,
+            instituteId,
+            departmentId,
+            programId,
+            semesterId,
+            batchId
         } = req.body;
 
         const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : email;
@@ -129,12 +139,14 @@ router.post('/register', async (req, res) => {
         const [result] = await db.query(`
             INSERT INTO users (
                 username, email, password, role,
+                institute_id, department_id, program_id, semester_id, batch_id,
                 specialization, qualification, experience_years, bio, profile_picture,
                 enrollment_number, department, semester, batch,
                 email_verified, password_changed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, CURRENT_TIMESTAMP)
         `, [
             username, normalizedEmail, hashedPassword, role,
+            instituteId || null, departmentId || null, programId || null, semesterId || null, batchId || null,
             specialization, qualification, experience_years, bio, profile_picture,
             enrollment_number, department, semester, batch
         ]);
@@ -212,6 +224,7 @@ router.get('/profile', authMiddleware, async (req, res) => {
         const [users] = await db.query(`
             SELECT
                 id, username, email, role,
+                institute_id, department_id, program_id, semester_id, batch_id,
                 specialization, qualification, experience_years, bio, profile_picture,
                 enrollment_number, department, semester, batch
             FROM users
@@ -242,7 +255,12 @@ router.put('/profile', authMiddleware, async (req, res) => {
             enrollment_number,
             department,
             semester,
-            batch
+            batch,
+            instituteId,
+            departmentId,
+            programId,
+            semesterId,
+            batchId
         } = req.body;
 
         await db.query(`
@@ -250,6 +268,11 @@ router.put('/profile', authMiddleware, async (req, res) => {
             SET
                 username = ?,
                 email = ?,
+                institute_id = COALESCE(?, institute_id),
+                department_id = COALESCE(?, department_id),
+                program_id = COALESCE(?, program_id),
+                semester_id = COALESCE(?, semester_id),
+                batch_id = COALESCE(?, batch_id),
                 specialization = ?,
                 qualification = ?,
                 experience_years = ?,
@@ -262,6 +285,7 @@ router.put('/profile', authMiddleware, async (req, res) => {
             WHERE id = ?
         `, [
             username, email,
+            instituteId || null, departmentId || null, programId || null, semesterId || null, batchId || null,
             specialization, qualification, experience_years, bio, profile_picture,
             enrollment_number, department, semester, batch,
             req.user.id
@@ -278,7 +302,7 @@ router.get('/teachers', authMiddleware, async (req, res) => {
     try {
         const [teachers] = await db.query(`
             SELECT
-                id, username,
+                id, username, institute_id, department_id, program_id, semester_id, batch_id,
                 specialization, qualification, experience_years, bio, profile_picture
             FROM users
             WHERE role = 'teacher'
@@ -296,6 +320,7 @@ router.get('/students', authMiddleware, teacherMiddleware, async (req, res) => {
         const [students] = await db.query(`
             SELECT DISTINCT
                 u.id, u.username, u.email,
+                u.institute_id, u.department_id, u.program_id, u.semester_id, u.batch_id,
                 u.enrollment_number, u.department, u.semester, u.batch
             FROM users u
             JOIN enrollments e ON e.student_id = u.id AND e.status = 'active'

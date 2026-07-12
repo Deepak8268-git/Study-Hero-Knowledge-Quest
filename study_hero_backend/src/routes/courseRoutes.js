@@ -12,22 +12,55 @@ const { authMiddleware, teacherMiddleware } = require('../middleware/authMiddlew
 const eventBus = require('../events/eventBus');
 const EVENTS = require('../events/eventNames');
 
+function numericOrNull(value) {
+    const number = Number(value);
+    return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+async function resolveCourseScope(req) {
+    const [teachers] = await db.query(`
+        SELECT institute_id, department_id, program_id, semester_id, batch_id
+        FROM users
+        WHERE id = ?
+    `, [req.user.id]);
+    const teacher = teachers[0] || {};
+
+    return {
+        instituteId: numericOrNull(req.body.instituteId) || teacher.institute_id || null,
+        departmentId: numericOrNull(req.body.departmentId) || teacher.department_id || null,
+        academicYearId: numericOrNull(req.body.academicYearId),
+        programId: numericOrNull(req.body.programId) || teacher.program_id || null,
+        semesterId: numericOrNull(req.body.semesterId) || teacher.semester_id || null,
+        batchId: numericOrNull(req.body.batchId) || teacher.batch_id || null,
+        subjectId: numericOrNull(req.body.subjectId)
+    };
+}
 // Get all courses visible to the authenticated user
 router.get('/', authMiddleware, async (req, res) => {
     try {
         const query = req.user.role === 'teacher'
             ? `
-                SELECT c.*, u.username as teacher_name
+                SELECT c.*, u.username as teacher_name, i.name as institute_name, d.name as department_name, ay.name as academic_year_name, p.name as program_name, s.name as subject_name
                 FROM courses c
                 JOIN users u ON c.teacher_id = u.id
+                LEFT JOIN institutes i ON i.id = c.institute_id
+                LEFT JOIN departments d ON d.id = c.department_id
+                LEFT JOIN academic_years ay ON ay.id = c.academic_year_id
+                LEFT JOIN programs p ON p.id = c.program_id
+                LEFT JOIN subjects s ON s.id = c.subject_id
                 WHERE c.teacher_id = ?
                 ORDER BY c.updated_at DESC, c.created_at DESC
             `
             : `
-                SELECT c.*, u.username as teacher_name
+                SELECT c.*, u.username as teacher_name, i.name as institute_name, d.name as department_name, ay.name as academic_year_name, p.name as program_name, s.name as subject_name
                 FROM enrollments e
                 JOIN courses c ON c.id = e.course_id
                 JOIN users u ON c.teacher_id = u.id
+                LEFT JOIN institutes i ON i.id = c.institute_id
+                LEFT JOIN departments d ON d.id = c.department_id
+                LEFT JOIN academic_years ay ON ay.id = c.academic_year_id
+                LEFT JOIN programs p ON p.id = c.program_id
+                LEFT JOIN subjects s ON s.id = c.subject_id
                 WHERE e.student_id = ? AND e.status = 'active'
                 ORDER BY c.updated_at DESC, c.created_at DESC
             `;
@@ -143,16 +176,26 @@ router.get('/:id', authMiddleware, async (req, res) => {
     try {
         const query = req.user.role === 'teacher'
             ? `
-                SELECT c.*, u.username as teacher_name
+                SELECT c.*, u.username as teacher_name, i.name as institute_name, d.name as department_name, ay.name as academic_year_name, p.name as program_name, s.name as subject_name
                 FROM courses c
                 JOIN users u ON c.teacher_id = u.id
+                LEFT JOIN institutes i ON i.id = c.institute_id
+                LEFT JOIN departments d ON d.id = c.department_id
+                LEFT JOIN academic_years ay ON ay.id = c.academic_year_id
+                LEFT JOIN programs p ON p.id = c.program_id
+                LEFT JOIN subjects s ON s.id = c.subject_id
                 WHERE c.id = ? AND c.teacher_id = ?
             `
             : `
-                SELECT c.*, u.username as teacher_name
+                SELECT c.*, u.username as teacher_name, i.name as institute_name, d.name as department_name, ay.name as academic_year_name, p.name as program_name, s.name as subject_name
                 FROM enrollments e
                 JOIN courses c ON c.id = e.course_id
                 JOIN users u ON c.teacher_id = u.id
+                LEFT JOIN institutes i ON i.id = c.institute_id
+                LEFT JOIN departments d ON d.id = c.department_id
+                LEFT JOIN academic_years ay ON ay.id = c.academic_year_id
+                LEFT JOIN programs p ON p.id = c.program_id
+                LEFT JOIN subjects s ON s.id = c.subject_id
                 WHERE c.id = ? AND e.student_id = ? AND e.status = 'active'
             `;
 
@@ -176,10 +219,16 @@ router.post('/', authMiddleware, teacherMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Course title is required' });
         }
 
-        const [result] = await db.query(
-            'INSERT INTO courses (title, description, teacher_id) VALUES (?, ?, ?)',
-            [title, description || null, req.user.id]
-        );
+        const scope = await resolveCourseScope(req);
+        const [result] = await db.query(`
+            INSERT INTO courses (
+                title, description, teacher_id,
+                institute_id, department_id, academic_year_id, program_id, semester_id, batch_id, subject_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            title, description || null, req.user.id,
+            scope.instituteId, scope.departmentId, scope.academicYearId, scope.programId, scope.semesterId, scope.batchId, scope.subjectId
+        ]);
 
         eventBus.emitDomain(EVENTS.COURSE_CREATED, {
             actorId: req.user.id,

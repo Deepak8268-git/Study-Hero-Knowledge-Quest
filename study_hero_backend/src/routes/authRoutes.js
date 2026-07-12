@@ -29,7 +29,12 @@ const registerSchema = z.object({
         username: z.string().trim().min(2).max(100),
         email: z.string().trim().email().max(150).transform((value) => value.toLowerCase()),
         password: z.string().min(1),
-        role: z.enum(['student', 'teacher']).optional()
+        role: z.enum(['student', 'teacher']).optional(),
+        instituteId: z.number().int().positive().optional().nullable(),
+        departmentId: z.number().int().positive().optional().nullable(),
+        programId: z.number().int().positive().optional().nullable(),
+        semesterId: z.number().int().positive().optional().nullable(),
+        batchId: z.number().int().positive().optional().nullable()
     })
 });
 
@@ -80,7 +85,12 @@ function publicUser(user) {
         username: user.username,
         email: user.email,
         role: user.role,
-        emailVerified: !!user.email_verified
+        emailVerified: !!user.email_verified,
+        instituteId: user.institute_id || null,
+        departmentId: user.department_id || null,
+        programId: user.program_id || null,
+        semesterId: user.semester_id || null,
+        batchId: user.batch_id || null
     };
 }
 
@@ -148,7 +158,7 @@ function isLocked(user) {
 
 router.post('/register', validateRequest(registerSchema), async (req, res) => {
     try {
-        const { username, email, password, role } = req.validated.body;
+        const { username, email, password, role, instituteId, departmentId, programId, semesterId, batchId } = req.validated.body;
         const selectedRole = role || 'student';
         const strength = validatePasswordStrength(password);
 
@@ -163,9 +173,9 @@ router.post('/register', validateRequest(registerSchema), async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 12);
         const [result] = await db.query(`
-            INSERT INTO users (username, email, password, role, email_verified, password_changed_at)
-            VALUES (?, ?, ?, ?, false, CURRENT_TIMESTAMP)
-        `, [username, email, hashedPassword, selectedRole]);
+            INSERT INTO users (username, email, password, role, institute_id, department_id, program_id, semester_id, batch_id, email_verified, password_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, false, CURRENT_TIMESTAMP)
+        `, [username, email, hashedPassword, selectedRole, instituteId || null, departmentId || null, programId || null, semesterId || null, batchId || null]);
 
         const [users] = await db.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
         const user = users[0];
@@ -243,7 +253,7 @@ router.post('/refresh', async (req, res) => {
 
         const refreshTokenHash = hashToken(refreshToken);
         const [sessions] = await db.query(`
-            SELECT s.*, u.id AS user_id, u.username, u.email, u.role, u.email_verified, u.password_changed_at
+            SELECT s.*, u.id AS user_id, u.username, u.email, u.role, u.institute_id, u.department_id, u.program_id, u.semester_id, u.batch_id, u.email_verified, u.password_changed_at
             FROM user_sessions s
             JOIN users u ON u.id = s.user_id
             WHERE s.refresh_token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > CURRENT_TIMESTAMP
@@ -262,6 +272,11 @@ router.post('/refresh', async (req, res) => {
             username: session.username,
             email: session.email,
             role: session.role,
+            institute_id: session.institute_id,
+            department_id: session.department_id,
+            program_id: session.program_id,
+            semester_id: session.semester_id,
+            batch_id: session.batch_id,
             email_verified: session.email_verified,
             password_changed_at: session.password_changed_at
         };
@@ -326,7 +341,7 @@ router.post('/logout-all', authMiddleware, async (req, res) => {
 });
 
 router.get('/me', authMiddleware, async (req, res) => {
-    const [users] = await db.query('SELECT id, username, email, role, email_verified FROM users WHERE id = ?', [req.user.id]);
+    const [users] = await db.query('SELECT id, username, email, role, institute_id, department_id, program_id, semester_id, batch_id, email_verified FROM users WHERE id = ?', [req.user.id]);
     if (users.length === 0) return res.status(404).json({ error: 'User not found' });
     res.json(publicUser(users[0]));
 });
