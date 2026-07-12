@@ -30,6 +30,13 @@ import AiLearningPage from './pages/AiLearningPage';
 import LmsPage from './pages/LmsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import OAuthCallbackPage from './pages/OAuthCallbackPage';
+import PerformanceDashboardPage from './pages/PerformanceDashboardPage';
+import ExamPredictionPage from './pages/ExamPredictionPage';
+import StudyPlannerPage from './pages/StudyPlannerPage';
+import LearningInsightsPage from './pages/LearningInsightsPage';
+import WeakTopicsPage from './pages/WeakTopicsPage';
+import RecommendationsPage from './pages/RecommendationsPage';
+import PerformanceHistoryPage from './pages/PerformanceHistoryPage';
 
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) => {
   const [isChecking, setIsChecking] = useState(true);
@@ -107,6 +114,13 @@ const AppRoutes: React.FC = () => (
     <Route path="/ai-learning" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><AiLearningPage /></ProtectedRoute>} />
     <Route path="/lms" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><LmsPage /></ProtectedRoute>} />
     <Route path="/analytics" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><AnalyticsPage /></ProtectedRoute>} />
+    <Route path="/performance" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><PerformanceDashboardPage /></ProtectedRoute>} />
+    <Route path="/exam-prediction" element={<ProtectedRoute allowedRoles={['student']}><ExamPredictionPage /></ProtectedRoute>} />
+    <Route path="/study-planner" element={<ProtectedRoute allowedRoles={['student']}><StudyPlannerPage /></ProtectedRoute>} />
+    <Route path="/learning-insights" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><LearningInsightsPage /></ProtectedRoute>} />
+    <Route path="/weak-topics" element={<ProtectedRoute allowedRoles={['student']}><WeakTopicsPage /></ProtectedRoute>} />
+    <Route path="/recommendations" element={<ProtectedRoute allowedRoles={['student']}><RecommendationsPage /></ProtectedRoute>} />
+    <Route path="/performance-history" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><PerformanceHistoryPage /></ProtectedRoute>} />
     <Route path="/settings" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><SettingsPage /></ProtectedRoute>} />
     <Route path="/change-password" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><ChangePasswordPage /></ProtectedRoute>} />
     <Route path="/quiz" element={<ProtectedRoute allowedRoles={['student', 'teacher']}><QuizPage /></ProtectedRoute>} />

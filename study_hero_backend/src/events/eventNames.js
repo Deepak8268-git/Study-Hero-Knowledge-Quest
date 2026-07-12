@@ -18,7 +18,9 @@ const EVENTS = {
     SECURITY_LOGIN: 'security.login',
     SECURITY_LOGOUT: 'security.logout',
     AI_OPERATION_COMPLETED: 'ai.operation_completed',
+    PERFORMANCE_ALERT: 'performance.alert',
     LMS_OPERATION_COMPLETED: 'lms.operation_completed'
 };
 
 module.exports = EVENTS;
+

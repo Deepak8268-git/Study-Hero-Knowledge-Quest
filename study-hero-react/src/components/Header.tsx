@@ -65,6 +65,7 @@ const Header: React.FC = () => {
               <Link to="/ai-learning" className="px-3 py-2 hover:text-accent transition-colors duration-300">AI</Link>
               <Link to="/lms" className="px-3 py-2 hover:text-accent transition-colors duration-300">LMS</Link>
               <Link to="/analytics" className="px-3 py-2 hover:text-accent transition-colors duration-300">Analytics</Link>
+              <Link to="/performance" className="px-3 py-2 hover:text-accent transition-colors duration-300">Intelligence</Link>
               <Link to={getDashboardLink()} className="px-4 py-2 hover:text-accent transition-colors duration-300 border border-transparent hover:border-accent rounded-button">
                 {userRole === 'teacher' ? 'Teacher Dashboard' : 'Student Dashboard'}
               </Link>
@@ -105,6 +106,7 @@ const Header: React.FC = () => {
                   <Link to="/ai-learning" className="py-3 border border-white rounded-button hover:bg-white hover:text-primary transition-all duration-300">AI Learning</Link>
                   <Link to="/lms" className="py-3 border border-white rounded-button hover:bg-white hover:text-primary transition-all duration-300">Learning Hub</Link>
                   <Link to="/analytics" className="py-3 border border-white rounded-button hover:bg-white hover:text-primary transition-all duration-300">Analytics</Link>
+                  <Link to="/performance" className="py-3 border border-white rounded-button hover:bg-white hover:text-primary transition-all duration-300">Intelligence</Link>
                   <Link to={getDashboardLink()} className="py-3 border border-white rounded-button hover:bg-white hover:text-primary transition-all duration-300">
                     {userRole === 'teacher' ? 'Teacher Dashboard' : 'Student Dashboard'}
                   </Link>

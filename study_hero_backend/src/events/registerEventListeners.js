@@ -190,6 +190,21 @@ function registerNotificationListeners(eventBus) {
         });
     });
 
+
+    onEvent(eventBus, EVENTS.PERFORMANCE_ALERT, async ({ actorId, studentId, courseId, alertTitle, alertMessage, priority = 'HIGH', referenceType = 'performance', referenceId = null }) => {
+        await createAndDeliverNotification({
+            recipientId: studentId,
+            actorId,
+            courseId,
+            type: NOTIFICATION_TYPE.PERFORMANCE_ALERT,
+            title: alertTitle || 'Performance alert',
+            message: alertMessage || 'There is a new AI performance insight.',
+            priority,
+            referenceType,
+            referenceId,
+            metadata: { alertTitle, alertMessage }
+        });
+    });
     onEvent(eventBus, EVENTS.SECURITY_LOGOUT, async ({ userId }) => {
         const copy = buildNotificationCopy(NOTIFICATION_TYPE.SECURITY_LOGOUT);
         await createAndDeliverNotification({
@@ -292,4 +307,5 @@ function registerEventListeners(eventBus) {
 }
 
 module.exports = registerEventListeners;
+
 

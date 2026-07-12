@@ -809,6 +809,163 @@ async function ensureCommercialSchema() {
             INDEX idx_downloads_user_target (user_id, target_type, target_id)
         )
     `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS student_performance (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            student_id INT NOT NULL,
+            course_id INT NULL,
+            overall_score DECIMAL(5,2) DEFAULT 0,
+            quiz_accuracy DECIMAL(5,2) DEFAULT 0,
+            assignment_quality DECIMAL(5,2) DEFAULT 0,
+            attendance_contribution DECIMAL(5,2) DEFAULT 0,
+            learning_consistency DECIMAL(5,2) DEFAULT 0,
+            performance_summary TEXT,
+            strengths JSON,
+            weaknesses JSON,
+            last_calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_student_performance_scope (student_id, course_id),
+            INDEX idx_student_performance_score (course_id, overall_score)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS performance_history (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            student_id INT NOT NULL,
+            course_id INT NULL,
+            period_type ENUM('daily', 'weekly', 'monthly') NOT NULL,
+            period_start DATE NOT NULL,
+            overall_score DECIMAL(5,2) DEFAULT 0,
+            quiz_accuracy DECIMAL(5,2) DEFAULT 0,
+            assignment_quality DECIMAL(5,2) DEFAULT 0,
+            attendance_contribution DECIMAL(5,2) DEFAULT 0,
+            learning_consistency DECIMAL(5,2) DEFAULT 0,
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_performance_history_period (student_id, course_id, period_type, period_start),
+            INDEX idx_performance_history_student_period (student_id, period_type, period_start)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS learning_streaks (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            student_id INT NOT NULL,
+            daily_streak INT DEFAULT 0,
+            weekly_streak INT DEFAULT 0,
+            longest_streak INT DEFAULT 0,
+            missed_days INT DEFAULT 0,
+            last_activity_date DATE NULL,
+            active_days JSON,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_learning_streak_student (student_id)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS study_plans (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            student_id INT NOT NULL,
+            course_id INT NULL,
+            title VARCHAR(180) NOT NULL,
+            plan_type ENUM('daily', 'weekly', 'monthly') NOT NULL,
+            exam_date DATE NULL,
+            recommended_hours DECIMAL(6,2) DEFAULT 0,
+            plan_json JSON NOT NULL,
+            status ENUM('active', 'completed', 'archived') DEFAULT 'active',
+            generated_by ENUM('system', 'ai') DEFAULT 'system',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            INDEX idx_study_plans_student_status (student_id, status, created_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS weak_topics (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            student_id INT NOT NULL,
+            course_id INT NULL,
+            topic VARCHAR(255) NOT NULL,
+            source_type ENUM('quiz', 'assignment', 'ai', 'lms', 'combined') DEFAULT 'combined',
+            source_id INT NULL,
+            weakness_score DECIMAL(5,2) DEFAULT 0,
+            evidence_count INT DEFAULT 0,
+            last_detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status ENUM('active', 'improving', 'resolved') DEFAULT 'active',
+            metadata JSON,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_weak_topic_scope (student_id, course_id, topic, source_type),
+            INDEX idx_weak_topics_student_status (student_id, status, weakness_score)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS recommendations (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            student_id INT NOT NULL,
+            course_id INT NULL,
+            type ENUM('practice_topic', 'watch_revision', 'attempt_quiz', 'complete_assignment', 'review_notes', 'study_plan', 'teacher_alert') NOT NULL,
+            title VARCHAR(180) NOT NULL,
+            description TEXT NOT NULL,
+            priority ENUM('LOW', 'NORMAL', 'HIGH', 'CRITICAL') DEFAULT 'NORMAL',
+            status ENUM('active', 'completed', 'dismissed') DEFAULT 'active',
+            reference_type VARCHAR(50),
+            reference_id INT,
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            INDEX idx_recommendations_student_status (student_id, status, priority, created_at),
+            INDEX idx_recommendations_course_type (course_id, type, created_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS prediction_history (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            student_id INT NOT NULL,
+            course_id INT NULL,
+            probability_of_passing DECIMAL(5,2) DEFAULT 0,
+            estimated_marks DECIMAL(5,2) DEFAULT 0,
+            confidence_score DECIMAL(5,2) DEFAULT 0,
+            risk_level ENUM('low', 'medium', 'high', 'critical') DEFAULT 'medium',
+            recommended_study_hours DECIMAL(6,2) DEFAULT 0,
+            model_version VARCHAR(50) DEFAULT 'deterministic-v1',
+            factors JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            INDEX idx_prediction_student_created (student_id, created_at),
+            INDEX idx_prediction_course_risk (course_id, risk_level, created_at)
+        )
+    `);
+
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS performance_snapshots (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            student_id INT NOT NULL,
+            course_id INT NULL,
+            snapshot_type ENUM('automatic', 'manual', 'event') DEFAULT 'automatic',
+            payload JSON NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            INDEX idx_snapshots_student_created (student_id, created_at),
+            INDEX idx_snapshots_course_created (course_id, created_at)
+        )
+    `);
     await ensureIndex('quiz_attempts', 'idx_quiz_attempts_student_status_submitted', '(student_id, status, submitted_at)');
     await ensureIndex('quiz_attempts', 'idx_quiz_attempts_quiz_status_submitted', '(quiz_id, status, submitted_at)');
     await ensureIndex('submissions', 'idx_submissions_student_submitted', '(student_id, submitted_at)');
@@ -821,3 +978,4 @@ async function ensureCommercialSchema() {
 }
 
 module.exports = ensureCommercialSchema;
+
